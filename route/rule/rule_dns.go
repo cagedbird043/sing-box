@@ -265,6 +265,11 @@ func NewDefaultDNSRule(ctx context.Context, logger log.ContextLogger, options op
 		rule.items = append(rule.items, item)
 		rule.allItems = append(rule.allItems, item)
 	}
+	if len(options.PreferredBy) > 0 {
+		item := NewPreferredByDNSItem(ctx, options.PreferredBy)
+		rule.items = append(rule.items, item)
+		rule.allItems = append(rule.allItems, item)
+	}
 	if len(options.RuleSet) > 0 {
 		//nolint:staticcheck
 		if options.Deprecated_RulesetIPCIDRMatchSource {

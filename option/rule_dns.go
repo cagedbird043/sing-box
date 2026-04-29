@@ -106,6 +106,7 @@ type RawDefaultDNSRule struct {
 	InterfaceAddress         *badjson.TypedMap[string, badoption.Listable[*badoption.Prefixable]]        `json:"interface_address,omitempty"`
 	NetworkInterfaceAddress  *badjson.TypedMap[InterfaceType, badoption.Listable[*badoption.Prefixable]] `json:"network_interface_address,omitempty"`
 	DefaultInterfaceAddress  badoption.Listable[*badoption.Prefixable]                                   `json:"default_interface_address,omitempty"`
+	PreferredBy              badoption.Listable[string]                                                  `json:"preferred_by,omitempty"`
 	RuleSet                  badoption.Listable[string]                                                  `json:"rule_set,omitempty"`
 	RuleSetIPCIDRMatchSource bool                                                                        `json:"rule_set_ip_cidr_match_source,omitempty"`
 	RuleSetIPCIDRAcceptEmpty bool                                                                        `json:"rule_set_ip_cidr_accept_empty,omitempty"`
