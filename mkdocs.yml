@@ -152,6 +152,7 @@ nav:
           - Tun: configuration/inbound/tun.md
           - Redirect: configuration/inbound/redirect.md
           - TProxy: configuration/inbound/tproxy.md
+      - Provider: configuration/provider/index.md
       - Outbound:
           - configuration/outbound/index.md
           - Direct: configuration/outbound/direct.md
@@ -279,6 +280,7 @@ plugins:
 
             Endpoint: 端点
             Inbound: 入站
+            Provider: 提供者
             Outbound: 出站
 
             Manual: 手册
