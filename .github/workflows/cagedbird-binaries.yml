@@ -8,12 +8,15 @@ on:
         required: false
         default: auto
         type: string
+  push:
+    branches:
+      - cagedbird/**
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.version }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.version || 'auto' }}
   cancel-in-progress: true
 
 jobs:
@@ -68,7 +71,7 @@ jobs:
       - name: Build binary
         run: scripts/ci/build-binary.sh
         env:
-          CAGEDBIRD_VERSION: ${{ inputs.version }}
+          CAGEDBIRD_VERSION: ${{ github.event.inputs.version || 'auto' }}
           TARGET_OS: ${{ matrix.target_os }}
           TARGET_ARCH: ${{ matrix.target_arch }}
           TARGET_GOAMD64: ${{ matrix.goamd64 }}
@@ -97,7 +100,7 @@ jobs:
       - name: Build Darwin arm64 binary
         run: scripts/ci/build-binary.sh
         env:
-          CAGEDBIRD_VERSION: ${{ inputs.version }}
+          CAGEDBIRD_VERSION: ${{ github.event.inputs.version || 'auto' }}
           TARGET_OS: darwin
           TARGET_ARCH: arm64
           CGO_ENABLED: "1"
