@@ -8,12 +8,15 @@ on:
         required: false
         default: auto
         type: string
+  push:
+    branches:
+      - cagedbird/**
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.version }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.version || 'auto' }}
   cancel-in-progress: true
 
 jobs:
@@ -49,7 +52,7 @@ jobs:
       - name: Build Android APKs
         run: scripts/ci/build-android-apks.sh
         env:
-          CAGEDBIRD_VERSION: ${{ inputs.version }}
+          CAGEDBIRD_VERSION: ${{ github.event.inputs.version || 'auto' }}
           CAGEDBIRD_ANDROID_APP_BRANCH: dev
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
