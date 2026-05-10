@@ -8,10 +8,6 @@ on:
         required: false
         default: auto
         type: string
-  push:
-    branches:
-      - cagedbird/**
-
 permissions:
   contents: read
 
