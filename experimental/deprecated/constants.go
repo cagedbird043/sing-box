@@ -102,10 +102,19 @@ var OptionLegacyDomainStrategyOptions = Note{
 	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-domain-strategy-options",
 }
 
+var OptionLegacyProviderDownloadDetour = Note{
+	Name:              "legacy-provider-download-detour",
+	Description:       "legacy `download_detour` remote provider option",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "LEGACY_PROVIDER_DOWNLOAD_DETOUR",
+}
+
 var Options = []Note{
 	OptionLegacyDNSTransport,
 	OptionLegacyDNSFakeIPOptions,
 	OptionOutboundDNSRuleItem,
 	OptionMissingDomainResolver,
 	OptionLegacyDomainStrategyOptions,
+	OptionLegacyProviderDownloadDetour,
 }
