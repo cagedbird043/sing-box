@@ -105,6 +105,7 @@ type Endpoint struct {
 	magicHostsUnrouted atomic.Bool
 
 	acceptRoutes               bool
+	forceLogin                 bool
 	exitNode                   string
 	exitNodeAllowLANAccess     bool
 	advertiseRoutes            []netip.Prefix
@@ -223,6 +224,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			},
 		},
 		acceptRoutes:               options.AcceptRoutes,
+		forceLogin:                 options.ForceLogin,
 		exitNode:                   options.ExitNode,
 		exitNodeAllowLANAccess:     options.ExitNodeAllowLANAccess,
 		advertiseRoutes:            options.AdvertiseRoutes,
@@ -400,7 +402,18 @@ func (t *Endpoint) postStart() error {
 			}, true
 		})
 	}
-	wgEngine := t.server.ExportLocalBackend().ExportEngine().(wgengine.ExportedUserspaceEngine)
+12: localBackend := t.server.ExportLocalBackend()
+	if t.forceLogin {
+		state := localBackend.State()
+		if state == ipn.NeedsLogin || state == ipn.NoState {
+			t.logger.Debug("LocalBackend state is ", state, "; force_login enabled; running StartLoginInteractive...")
+			err = localBackend.StartLoginInteractive(t.ctx)
+			if err != nil {
+				return E.Cause(err, "force login")
+			}
+		}
+	}
+	wgEngine := localBackend.ExportEngine().(wgengine.ExportedUserspaceEngine)
 	wgEngine.SetOnReconfigListener(t.onReconfig)
 	t.wgEngine = wgEngine
 
