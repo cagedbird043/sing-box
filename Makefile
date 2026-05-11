@@ -86,7 +86,7 @@ update_android_version:
 	go run ./cmd/internal/update_android_version
 
 build_android:
-	cd ../sing-box-for-android && ./gradlew :app:clean :app:assembleOtherRelease :app:assembleOtherLegacyRelease && ./gradlew --stop
+	cd ../sing-box-for-android && ./gradlew :app:clean :app:assembleOtherRelease && ./gradlew --stop
 
 upload_android:
 	mkdir -p dist/release_android
