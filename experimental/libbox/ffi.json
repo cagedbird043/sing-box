@@ -49,35 +49,6 @@
       }
     },
     {
-      "id": "android-legacy",
-      "packages": ["libbox"],
-      "default": {
-        "tags": [
-          "with_gvisor",
-          "with_quic",
-          "with_wireguard",
-          "with_utls",
-          "with_clash_api",
-          "badlinkname",
-          "tfogo_checklinkname0",
-          "with_tailscale",
-          "ts_omit_logtail",
-          "ts_omit_ssh",
-          "ts_omit_drive",
-          "ts_omit_taildrop",
-          "ts_omit_webclient",
-          "ts_omit_doctor",
-          "ts_omit_capture",
-          "ts_omit_kube",
-          "ts_omit_aws",
-          "ts_omit_synology",
-          "ts_omit_bird"
-        ],
-        "ldflags": "-X github.com/sagernet/sing-box/constant.Version=${VERSION} -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0",
-        "trimpath": true
-      }
-    },
-    {
       "id": "apple",
       "packages": ["libbox"],
       "default": {
@@ -163,26 +134,6 @@
         {
           "type": "aar",
           "output_path": "libbox.aar",
-          "execute_after": [
-            "if [ -d \"${DEPLOY_ANDROID}\" ]; then",
-            "  rm -f \"${DEPLOY_ANDROID}/$$(basename \"${OUTPUT_PATH}\")\"",
-            "  mv \"${OUTPUT_PATH}\" \"${DEPLOY_ANDROID}/\"",
-            "fi"
-          ]
-        }
-      ]
-    },
-    {
-      "type": "android",
-      "build": "android-legacy",
-      "min_sdk": 21,
-      "ndk_version": "28.0.13004108",
-      "lib_name": "box",
-      "languages": [{ "type": "java" }],
-      "artifacts": [
-        {
-          "type": "aar",
-          "output_path": "libbox-legacy.aar",
           "execute_after": [
             "if [ -d \"${DEPLOY_ANDROID}\" ]; then",
             "  rm -f \"${DEPLOY_ANDROID}/$$(basename \"${OUTPUT_PATH}\")\"",
