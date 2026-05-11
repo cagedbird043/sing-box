@@ -15,6 +15,7 @@ type TailscaleEndpointOptions struct {
 	DialerOptions
 	StateDirectory             string                     `json:"state_directory,omitempty"`
 	AuthKey                    string                     `json:"auth_key,omitempty"`
+	ForceLogin                 bool                       `json:"force_login,omitempty"`
 	ControlURL                 string                     `json:"control_url,omitempty"`
 	ControlHTTPClient          *HTTPClientOptions         `json:"control_http_client,omitempty"`
 	Ephemeral                  bool                       `json:"ephemeral,omitempty"`

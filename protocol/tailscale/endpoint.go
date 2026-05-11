@@ -96,6 +96,7 @@ type Endpoint struct {
 	routePrefixes atomic.Pointer[netipx.IPSet]
 
 	acceptRoutes               bool
+	forceLogin                 bool
 	exitNode                   string
 	exitNodeAllowLANAccess     bool
 	advertiseRoutes            []netip.Prefix
@@ -256,6 +257,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		platformInterface:          service.FromContext[adapter.PlatformInterface](ctx),
 		server:                     server,
 		acceptRoutes:               options.AcceptRoutes,
+		forceLogin:                 options.ForceLogin,
 		exitNode:                   options.ExitNode,
 		exitNodeAllowLANAccess:     options.ExitNodeAllowLANAccess,
 		advertiseRoutes:            options.AdvertiseRoutes,
@@ -385,7 +387,18 @@ func (t *Endpoint) postStart() error {
 			}, true
 		})
 	}
-	t.server.ExportLocalBackend().ExportEngine().(wgengine.ExportedUserspaceEngine).SetOnReconfigListener(t.onReconfig)
+	localBackend := t.server.ExportLocalBackend()
+	if t.forceLogin {
+		state := localBackend.State()
+		if state == ipn.NeedsLogin || state == ipn.NoState {
+			t.logger.Debug("LocalBackend state is ", state, "; force_login enabled; running StartLoginInteractive...")
+			err = localBackend.StartLoginInteractive(t.ctx)
+			if err != nil {
+				return E.Cause(err, "force login")
+			}
+		}
+	}
+	localBackend.ExportEngine().(wgengine.ExportedUserspaceEngine).SetOnReconfigListener(t.onReconfig)
 
 	ipStack := t.server.ExportNetstack().ExportIPStack()
 	gErr := ipStack.SetSpoofing(tun.DefaultNIC, true)
@@ -403,7 +416,6 @@ func (t *Endpoint) postStart() error {
 	t.icmpForwarder = icmpForwarder
 	t.registerNetstackHandlers()
 
-	localBackend := t.server.ExportLocalBackend()
 	perfs := &ipn.MaskedPrefs{
 		Prefs: ipn.Prefs{
 			RouteAll:        t.acceptRoutes,
