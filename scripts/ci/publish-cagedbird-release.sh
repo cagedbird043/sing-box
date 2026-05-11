@@ -33,8 +33,6 @@ fi
 
 mkdir -p "${dist}"
 cat > "${notes}" <<NOTES
-# ${RELEASE_VERSION}
-
 Native subscription-provider build from the cagedbird upstream-tracking fork.
 
 - Branch: ${GITHUB_REF_NAME:-unknown}
