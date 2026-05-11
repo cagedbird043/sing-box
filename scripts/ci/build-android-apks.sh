@@ -55,22 +55,21 @@ export PATH="${PATH}:$(go env GOPATH)/bin"
 make lib_android
 
 mkdir -p clients/android/app/libs
-cp -f ./*.aar clients/android/app/libs/
+cp -f ./libbox.aar clients/android/app/libs/
 
 go run -v ./cmd/internal/update_android_version --ci --nightly
 
 (
   cd clients/android
-  ./gradlew :app:assembleOtherRelease :app:assembleOtherLegacyRelease
+  ./gradlew :app:assembleOtherRelease
 )
 
 out_dir="${OUT_DIR:-dist/cagedbird-android}"
 rm -rf "${out_dir}"
 mkdir -p "${out_dir}"
 
-cp -f ./*.aar "${out_dir}/"
+cp -f ./libbox.aar "${out_dir}/"
 find clients/android/app/build/outputs/apk/other/release \
-     clients/android/app/build/outputs/apk/otherLegacy/release \
      -type f -name '*.apk' -exec cp -f {} "${out_dir}/" \;
 
 if [[ -f clients/android/version.properties ]]; then
