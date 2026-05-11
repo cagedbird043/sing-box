@@ -21,6 +21,7 @@ icon: material/new-box
   "tag": "ts-ep",
   "state_directory": "",
   "auth_key": "",
+  "force_login": false,
   "control_url": "",
   "ephemeral": false,
   "hostname": "",
@@ -59,6 +60,13 @@ Example: `$HOME/.tailscale`
 
 The auth key to create the node. If the node is already created (from state previously stored), then this field is not
 used.
+
+#### force_login
+
+Force an authentication attempt when starting the endpoint.
+
+This is useful for unattended first enrollment with `auth_key` on platforms where a new state directory may stay in
+`NoState` and the embedded Tailscale server would otherwise ignore the configured auth key.
 
 #### control_url
 
