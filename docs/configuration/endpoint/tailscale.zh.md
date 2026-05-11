@@ -25,6 +25,7 @@ icon: material/new-box
   "tag": "ts-ep",
   "state_directory": "",
   "auth_key": "",
+  "force_login": false,
   "control_url": "",
   "ephemeral": false,
   "hostname": "",
@@ -63,6 +64,13 @@ icon: material/new-box
     认证密钥不是必需的。默认情况下，sing-box 将记录登录 URL（或在图形客户端上弹出通知）。
 
 用于创建节点的认证密钥。如果节点已经创建（从之前存储的状态），则不使用此字段。
+
+#### force_login
+
+启动端点时强制执行一次认证流程。
+
+这适用于在无人值守首次入网时配合 `auth_key` 使用：在某些平台上，新的状态目录可能保持在 `NoState`，
+此时嵌入式 Tailscale 服务器默认会忽略已配置的认证密钥。
 
 #### control_url
 
