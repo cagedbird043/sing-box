@@ -87,8 +87,9 @@ write_aur_srcinfo() {
   cat > "${path}" <<SRCINFO
 pkgbase = sing-box-cagedbird-bin
 	pkgdesc = The universal proxy platform with native Clash subscription support (cagedbird binary build)
-	pkgver = ${PKGVER_UNDERSCORE}
+	pkgver = ${AUR_PKGVER_UNDERSCORE}
 	pkgrel = 1
+	epoch = ${AUR_EPOCH}
 	url = ${SOURCE_URL}
 	arch = x86_64
 	arch = aarch64
@@ -139,6 +140,17 @@ from pathlib import Path
 path = Path(sys.argv[1])
 text = path.read_text()
 text = re.sub(r'^_pkgver=.*$', f'_pkgver={os.environ["RELEASE_VERSION"]}', text, flags=re.M)
+text = re.sub(r'^pkgver=.*$', f'pkgver={os.environ["AUR_PKGVER_UNDERSCORE"]}', text, flags=re.M)
+if re.search(r'^epoch=.*$', text, flags=re.M):
+    text = re.sub(r'^epoch=.*$', f'epoch={os.environ["AUR_EPOCH"]}', text, flags=re.M)
+else:
+    text = re.sub(
+        r'^(pkgver=.*)$',
+        rf'\1\nepoch={os.environ["AUR_EPOCH"]}',
+        text,
+        count=1,
+        flags=re.M,
+    )
 text = re.sub(
     r"sha256sums=\([\s\S]*?\n\)",
     "sha256sums=(" +
@@ -219,9 +231,24 @@ SHA_CONFIG="$(sha256_url "${raw_url}/config.json" "${assets_dir}/config.json")"
 SHA_LINUX_AMD64="$(sha256_url "${release_url}/sing-box-cagedbird-linux-amd64.tar.gz" "${assets_dir}/sing-box-cagedbird-linux-amd64.tar.gz")"
 SHA_LINUX_ARM64="$(sha256_url "${release_url}/sing-box-cagedbird-linux-arm64.tar.gz" "${assets_dir}/sing-box-cagedbird-linux-arm64.tar.gz")"
 SHA_DARWIN_ARM64="$(sha256_url "${release_url}/sing-box-cagedbird-darwin-arm64.tar.gz" "${assets_dir}/sing-box-cagedbird-darwin-arm64.tar.gz")"
-PKGVER_UNDERSCORE="${RELEASE_VERSION//-/_}"
 
-export RELEASE_VERSION SOURCE_URL SOURCE_REPO release_url raw_url PKGVER_UNDERSCORE
+derive_aur_pkgver() {
+  local short_commit rev_count
+  short_commit="$(git rev-parse --short HEAD 2>/dev/null || true)"
+  rev_count="$(git rev-list --count HEAD 2>/dev/null || true)"
+
+  if [[ "${RELEASE_VERSION}" =~ ^(.+)-cagedbird\.([0-9a-f]+)$ && -n "${short_commit}" && -n "${rev_count}" ]]; then
+    printf '%s-cagedbird.r%s.g%s\n' "${BASH_REMATCH[1]}" "${rev_count}" "${short_commit}"
+  else
+    printf '%s\n' "${RELEASE_VERSION}"
+  fi
+}
+
+AUR_EPOCH="${AUR_EPOCH:-1}"
+AUR_PKGVER="$(derive_aur_pkgver)"
+AUR_PKGVER_UNDERSCORE="${AUR_PKGVER//-/_}"
+
+export RELEASE_VERSION SOURCE_URL SOURCE_REPO release_url raw_url AUR_EPOCH AUR_PKGVER_UNDERSCORE
 export SHA_SERVICE SHA_SERVICE_AT SHA_SYSUSERS SHA_RULES SHA_SPLIT_DNS SHA_CONFIG
 export SHA_LINUX_AMD64 SHA_LINUX_ARM64 SHA_DARWIN_ARM64
 
