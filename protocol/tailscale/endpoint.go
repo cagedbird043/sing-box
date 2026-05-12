@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -67,6 +68,10 @@ var (
 	_ adapter.DirectRouteOutbound         = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
 )
+
+const tsnetForceLoginEnv = "TSNET_FORCE_LOGIN"
+
+var tsnetForceLoginStartMu sync.Mutex
 
 func init() {
 	version.SetVersion("sing-box " + C.Version)
@@ -368,8 +373,40 @@ func (t *Endpoint) start() error {
 	return nil
 }
 
+func (t *Endpoint) startServer() error {
+	if !t.forceLogin {
+		return t.server.Start()
+	}
+	// tsnet only consumes AuthKey in NoState when TSNET_FORCE_LOGIN is set before
+	// Server.Start. Keep the knob scoped to this start call so force_login remains
+	// a sing-box endpoint option instead of an Android/user environment setup step.
+	t.logger.Debug("force_login enabled; applying ", tsnetForceLoginEnv, " during tsnet start")
+	tsnetForceLoginStartMu.Lock()
+	defer tsnetForceLoginStartMu.Unlock()
+	restore, err := setTemporaryEnv(tsnetForceLoginEnv, "true")
+	if err != nil {
+		return err
+	}
+	defer restore()
+	return t.server.Start()
+}
+
+func setTemporaryEnv(name string, value string) (func(), error) {
+	oldValue, hadOldValue := os.LookupEnv(name)
+	if err := os.Setenv(name, value); err != nil {
+		return nil, err
+	}
+	return func() {
+		if hadOldValue {
+			_ = os.Setenv(name, oldValue)
+		} else {
+			_ = os.Unsetenv(name)
+		}
+	}, nil
+}
+
 func (t *Endpoint) postStart() error {
-	err := t.server.Start()
+	err := t.startServer()
 	if err != nil {
 		if t.systemTun != nil {
 			_ = t.systemTun.Close()
@@ -388,16 +425,6 @@ func (t *Endpoint) postStart() error {
 		})
 	}
 	localBackend := t.server.ExportLocalBackend()
-	if t.forceLogin {
-		state := localBackend.State()
-		if state == ipn.NeedsLogin || state == ipn.NoState {
-			t.logger.Debug("LocalBackend state is ", state, "; force_login enabled; running StartLoginInteractive...")
-			err = localBackend.StartLoginInteractive(t.ctx)
-			if err != nil {
-				return E.Cause(err, "force login")
-			}
-		}
-	}
 	localBackend.ExportEngine().(wgengine.ExportedUserspaceEngine).SetOnReconfigListener(t.onReconfig)
 
 	ipStack := t.server.ExportNetstack().ExportIPStack()
