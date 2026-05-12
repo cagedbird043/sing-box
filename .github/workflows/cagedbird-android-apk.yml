@@ -29,6 +29,19 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ~1.25.9
+          cache: false
+      - name: Go and gomobile cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/pkg/gomobile
+            ~/go/bin/gomobile
+            ~/go/bin/gobind
+          key: android-go-gomobile-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile', 'cmd/internal/build_libbox/**') }}-r28-v0.1.12
+          restore-keys: |
+            android-go-gomobile-${{ runner.os }}-
       - name: Setup Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1
@@ -44,7 +57,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.gradle
-          key: gradle-${{ hashFiles('clients/android/**/*.gradle*', 'clients/android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('clients/android/**/*.gradle*', 'clients/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
       - name: Build Android APKs
         run: scripts/ci/build-android-apks.sh
         env:
