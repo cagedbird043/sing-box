@@ -53,6 +53,7 @@ jobs:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+          CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64 }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
