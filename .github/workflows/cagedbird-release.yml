@@ -263,3 +263,33 @@ jobs:
           RELEASE_PRERELEASE: "true"
           RELEASE_DRAFT: "false"
           RELEASE_LATEST: "false"
+
+  publish-distribution:
+    name: Publish AUR and Homebrew tap
+    needs:
+      - version
+      - publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Check distribution SSH secret
+        id: distribution-secret
+        shell: bash
+        env:
+          CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY: ${{ secrets.CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY}" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY is not configured; skipping AUR/Homebrew publishing."
+          fi
+      - name: Publish distribution metadata
+        if: steps.distribution-secret.outputs.enabled == 'true'
+        run: scripts/ci/publish-cagedbird-distribution.sh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY: ${{ secrets.CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY }}
