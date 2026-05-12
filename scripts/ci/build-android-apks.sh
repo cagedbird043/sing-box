@@ -26,10 +26,21 @@ echo "Using Android app branch: ${android_app_branch}"
 git -C clients/android fetch --depth 1 origin "${android_app_branch}"
 git -C clients/android checkout --detach FETCH_HEAD
 
-signing_mode="local-properties"
-if [[ -z "${LOCAL_PROPERTIES:-}" ]]; then
+signing_mode="secret-stable-key"
+if [[ -n "${LOCAL_PROPERTIES:-}" || -n "${CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64:-}" ]]; then
+  if [[ -z "${LOCAL_PROPERTIES:-}" || -z "${CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64:-}" ]]; then
+    echo "LOCAL_PROPERTIES and CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64 must be configured together for stable Android signing." >&2
+    exit 1
+  fi
+  echo "Using stable Android signing material from repository secrets."
+  printf '%s' "${CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64}" | base64 -d > clients/android/app/release.keystore
+  # LOCAL_PROPERTIES is intentionally left in the environment: the Android Gradle
+  # project decodes that base64-encoded properties blob itself. Validate that it is
+  # decodable here so CI fails before Gradle if the secret is malformed.
+  printf '%s' "${LOCAL_PROPERTIES}" | base64 -d >/dev/null
+else
   signing_mode="ephemeral-ci-key"
-  echo "LOCAL_PROPERTIES is empty; generating an ephemeral CI signing key."
+  echo "Stable Android signing secrets are empty; generating an ephemeral CI signing key."
   signing_pass="${CAGEDBIRD_APK_KEYSTORE_PASS:-cagedbird-ci-password}"
   signing_alias="${CAGEDBIRD_APK_KEY_ALIAS:-cagedbird-ci}"
   signing_key_pass="${CAGEDBIRD_APK_KEY_PASS:-${signing_pass}}"
