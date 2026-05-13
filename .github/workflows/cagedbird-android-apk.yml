@@ -64,7 +64,6 @@ jobs:
         run: scripts/ci/build-android-apks.sh
         env:
           CAGEDBIRD_VERSION: ${{ github.event.inputs.version || 'auto' }}
-          CAGEDBIRD_ANDROID_APP_BRANCH: dev
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
