@@ -21,10 +21,15 @@ cleanup_build_tag() {
 trap cleanup_build_tag EXIT
 git tag "${build_tag}" -f
 
-android_app_branch="${CAGEDBIRD_ANDROID_APP_BRANCH:-dev}"
-echo "Using Android app branch: ${android_app_branch}"
-git -C clients/android fetch --depth 1 origin "${android_app_branch}"
-git -C clients/android checkout --detach FETCH_HEAD
+android_app_ref="${CAGEDBIRD_ANDROID_APP_REF:-}"
+if [[ -n "${android_app_ref}" ]]; then
+  echo "Using explicit Android app ref from origin: ${android_app_ref}"
+  git -C clients/android fetch --depth 1 origin "${android_app_ref}"
+  git -C clients/android checkout --detach FETCH_HEAD
+else
+  echo "Using pinned Android submodule commit: $(git -C clients/android rev-parse --short HEAD)"
+fi
+scripts/ci/check-android-submodule-sync.sh
 
 signing_mode="secret-stable-key"
 if [[ -n "${LOCAL_PROPERTIES:-}" || -n "${CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64:-}" ]]; then
