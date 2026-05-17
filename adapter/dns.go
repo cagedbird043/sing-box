@@ -74,6 +74,11 @@ type DNSTransport interface {
 	Exchange(ctx context.Context, message *dns.Msg) (*dns.Msg, error)
 }
 
+type DNSTransportWithPreferredDomain interface {
+	DNSTransport
+	PreferredDomain(domain string) bool
+}
+
 type LegacyDNSTransport interface {
 	LegacyStrategy() C.DomainStrategy
 	LegacyClientSubnet() netip.Prefix

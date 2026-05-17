@@ -30,6 +30,10 @@ func NewFile(path string) *File {
 	}
 }
 
+func NewDefault() (*File, error) {
+	return NewFile(DefaultPath), nil
+}
+
 func (f *File) Lookup(name string) []netip.Addr {
 	f.access.Lock()
 	defer f.access.Unlock()

@@ -19,18 +19,23 @@ func RegisterTransport(registry *dns.TransportRegistry) {
 	dns.RegisterTransport[option.HostsDNSServerOptions](registry, C.DNSTypeHosts, NewTransport)
 }
 
-var _ adapter.DNSTransport = (*Transport)(nil)
+var (
+	_ adapter.DNSTransport                    = (*Transport)(nil)
+	_ adapter.DNSTransportWithPreferredDomain = (*Transport)(nil)
+)
 
 type Transport struct {
 	dns.TransportAdapter
 	files      []*File
 	predefined map[string][]netip.Addr
+	providers  []*RemoteProvider
 }
 
 func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, options option.HostsDNSServerOptions) (adapter.DNSTransport, error) {
 	var (
 		files      []*File
 		predefined = make(map[string][]netip.Addr)
+		providers  []*RemoteProvider
 	)
 	if len(options.Path) == 0 {
 		files = append(files, NewFile(DefaultPath))
@@ -38,6 +43,14 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 		for _, path := range options.Path {
 			files = append(files, NewFile(filemanager.BasePath(ctx, os.ExpandEnv(path))))
 		}
+	}
+	for index, providerOptions := range options.Providers {
+		provider, err := NewRemoteProvider(ctx, logger, index, providerOptions)
+		if err != nil {
+			return nil, err
+		}
+		providers = append(providers, provider)
+		files = append(files, NewFile(provider.Path()))
 	}
 	if options.Predefined != nil {
 		for _, entry := range options.Predefined.Entries() {
@@ -48,18 +61,43 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 		TransportAdapter: dns.NewTransportAdapter(C.DNSTypeHosts, tag, nil),
 		files:            files,
 		predefined:       predefined,
+		providers:        providers,
 	}, nil
 }
 
 func (t *Transport) Start(stage adapter.StartStage) error {
+	if stage != adapter.StartStateStart {
+		return nil
+	}
+	for _, provider := range t.providers {
+		err := provider.Start()
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (t *Transport) Close() error {
+	for _, provider := range t.providers {
+		_ = provider.Close()
+	}
 	return nil
 }
 
 func (t *Transport) Reset() {
+}
+
+func (t *Transport) PreferredDomain(domain string) bool {
+	if _, loaded := t.predefined[mDNS.CanonicalName(domain)]; loaded {
+		return true
+	}
+	for _, file := range t.files {
+		if len(file.Lookup(domain)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {

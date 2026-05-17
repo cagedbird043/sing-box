@@ -1,11 +1,22 @@
 package hosts_test
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"testing"
+	"time"
 
+	"os"
+
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/dns/transport/hosts"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/json/badoption"
 
+	mDNS "github.com/miekg/dns"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,4 +24,88 @@ func TestHosts(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, []netip.Addr{netip.AddrFrom4([4]byte{127, 0, 0, 1}), netip.IPv6Loopback()}, hosts.NewFile("testdata/hosts").Lookup("localhost"))
 	require.NotEmpty(t, hosts.NewFile(hosts.DefaultPath).Lookup("localhost"))
+}
+
+func TestHostsRemoteProvider(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "sing-box test", request.Header.Get("User-Agent"))
+		_, err := writer.Write([]byte("142.251.111.188 mtalk.google.com\n"))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	cachePath := t.TempDir() + "/fcm.hosts"
+	transport, err := hosts.NewTransport(
+		context.Background(),
+		testLogger(),
+		"hosts",
+		option.HostsDNSServerOptions{
+			Providers: []option.HostsProviderOptions{{
+				Type:           "remote",
+				Tag:            "fcm",
+				URL:            server.URL,
+				Path:           cachePath,
+				UserAgent:      "sing-box test",
+				UpdateInterval: badoption.Duration(time.Hour),
+			}},
+		},
+	)
+	require.NoError(t, err)
+	require.NoError(t, transport.Start(adapter.StartStateStart))
+	defer transport.Close()
+
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("142.251.111.188")}, hosts.NewFile(cachePath).Lookup("mtalk.google.com"))
+	require.True(t, transport.(adapter.DNSTransportWithPreferredDomain).PreferredDomain("mtalk.google.com."))
+
+	response, err := transport.Exchange(context.Background(), hostsQuery("mtalk.google.com.", mDNS.TypeA))
+	require.NoError(t, err)
+	require.Len(t, response.Answer, 1)
+	require.Contains(t, response.Answer[0].String(), "142.251.111.188")
+}
+
+func TestHostsRemoteProviderKeepsCacheOnUpdateFailure(t *testing.T) {
+	t.Parallel()
+	cachePath := t.TempDir() + "/fcm.hosts"
+	require.NoError(t, os.WriteFile(cachePath, []byte("142.251.111.188 mtalk.google.com\n"), 0o644))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	server.Close()
+
+	transport, err := hosts.NewTransport(
+		context.Background(),
+		testLogger(),
+		"hosts",
+		option.HostsDNSServerOptions{
+			Providers: []option.HostsProviderOptions{{
+				Type:           "remote",
+				Tag:            "fcm",
+				URL:            server.URL,
+				Path:           cachePath,
+				UpdateInterval: badoption.Duration(time.Hour),
+			}},
+		},
+	)
+	require.NoError(t, err)
+	require.NoError(t, transport.Start(adapter.StartStateStart))
+	defer transport.Close()
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("142.251.111.188")}, hosts.NewFile(cachePath).Lookup("mtalk.google.com"))
+}
+
+func hostsQuery(domain string, qType uint16) *mDNS.Msg {
+	return &mDNS.Msg{
+		MsgHdr: mDNS.MsgHdr{
+			Id: 1,
+		},
+		Question: []mDNS.Question{{
+			Name:   domain,
+			Qtype:  qType,
+			Qclass: mDNS.ClassINET,
+		}},
+	}
+}
+
+func testLogger() log.ContextLogger {
+	return log.NewNOPFactory().NewLogger("hosts-test")
 }
