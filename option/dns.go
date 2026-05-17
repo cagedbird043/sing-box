@@ -6,7 +6,7 @@ import (
 	"reflect"
 
 	C "github.com/sagernet/sing-box/constant"
-	"github.com/sagernet/sing-box/schema"
+	"github.com/sagernet/sing/common/byteformats"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badjson"
@@ -179,6 +179,19 @@ func (o *DNSServerAddressOptions) ReplaceServerOptions(options ServerOptions) {
 type HostsDNSServerOptions struct {
 	Path       badoption.Listable[string]                                `json:"path,omitempty"`
 	Predefined *badjson.TypedMap[string, badoption.Listable[netip.Addr]] `json:"predefined,omitempty"`
+	Providers  []HostsProviderOptions                                    `json:"providers,omitempty"`
+}
+
+type HostsProviderOptions struct {
+	Type           string                   `json:"type,omitempty"`
+	Tag            string                   `json:"tag,omitempty"`
+	URL            string                   `json:"url,omitempty"`
+	Path           string                   `json:"path,omitempty"`
+	UserAgent      string                   `json:"user_agent,omitempty"`
+	HTTPClient     *HTTPClientOptions       `json:"http_client,omitempty"`
+	UpdateInterval badoption.Duration       `json:"update_interval,omitempty"`
+	Required       bool                     `json:"required,omitempty"`
+	MaxSize        *byteformats.MemoryBytes `json:"max_size,omitempty"`
 }
 
 type RawLocalDNSServerOptions struct {
