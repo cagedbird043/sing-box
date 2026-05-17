@@ -221,7 +221,7 @@ func (p *RemoteProvider) writeCacheFile(content []byte) error {
 		os.Remove(tmpPath)
 		return closeErr
 	}
-	if err = os.Chmod(tmpPath, 0o666); err != nil {
+	if err = os.Chmod(tmpPath, 0o644); err != nil {
 		os.Remove(tmpPath)
 		return err
 	}
