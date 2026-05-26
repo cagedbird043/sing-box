@@ -122,6 +122,7 @@ type LocalRuleSet struct {
 
 type RemoteRuleSet struct {
 	URL            string             `json:"url"`
+	HTTPClient     string             `json:"http_client,omitempty"`
 	DownloadDetour string             `json:"download_detour,omitempty"`
 	UpdateInterval badoption.Duration `json:"update_interval,omitempty"`
 }

@@ -67,6 +67,7 @@ type ProviderRemoteOptions struct {
 	OverrideDialer *OverrideDialerOptions `json:"override_dialer,omitempty"`
 	OverrideTLS    *OverrideTLSOptions    `json:"override_tls,omitempty"`
 
+	HTTPClient     string `json:"http_client,omitempty"`
 	DownloadDetour string `json:"download_detour,omitempty"`
 }
 
