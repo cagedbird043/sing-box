@@ -4,9 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - cagedbird/alpha
       - cagedbird/**
   pull_request:
     branches:
+      - cagedbird/alpha
       - cagedbird/**
 
 permissions:
