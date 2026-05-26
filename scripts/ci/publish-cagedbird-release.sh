@@ -7,7 +7,7 @@ set -euo pipefail
 repo="${GITHUB_REPOSITORY:-cagedbird043/sing-box}"
 tag="v${RELEASE_VERSION}"
 dist="${RELEASE_DIST:-dist/release}"
-title="sing-box cagedbird ${RELEASE_VERSION}"
+title="${RELEASE_VERSION}"
 notes="${dist}/RELEASE-NOTES.md"
 release_prerelease="${RELEASE_PRERELEASE:-true}"
 release_draft="${RELEASE_DRAFT:-false}"
