@@ -29,31 +29,39 @@ official_head_short="$(git -C "${android_dir}" rev-parse --short FETCH_HEAD)"
 official_head_version="$(git -C "${android_dir}" show "${official_head}:version.properties" | awk -F= '$1 == "VERSION_NAME" {print $2}' | tail -n1)"
 echo "Official Android ${official_ref} head: ${official_head_short} (${official_head_version})"
 
-required_commit=""
-while read -r commit; do
+mapfile -t matching_commits < <(while read -r commit; do
   version="$(git -C "${android_dir}" show "${commit}:version.properties" 2>/dev/null | awk -F= '$1 == "VERSION_NAME" {print $2}' | tail -n1 || true)"
   if [[ "${version}" == "${core_base}" ]]; then
-    required_commit="${commit}"
-    break
+    printf '%s\n' "${commit}"
   fi
-done < <(git -C "${android_dir}" rev-list --max-count=200 FETCH_HEAD)
+done < <(git -C "${android_dir}" rev-list --max-count=200 FETCH_HEAD))
 
-if [[ -z "${required_commit}" ]]; then
+if (( ${#matching_commits[@]} == 0 )); then
   cat >&2 <<MSG
 Could not find an official Android ${official_ref} commit with VERSION_NAME=${core_base}
 within the fetched history. Increase fetch depth or update the Android baseline manually.
 MSG
   exit 1
 fi
-required_short="$(git -C "${android_dir}" rev-parse --short "${required_commit}")"
-echo "Required official Android baseline for core ${core_base}: ${required_short}"
 
-if ! git -C "${android_dir}" merge-base --is-ancestor "${required_commit}" "${current_commit}"; then
+required_commit="${matching_commits[0]}"
+contained_commit=""
+for commit in "${matching_commits[@]}"; do
+  if git -C "${android_dir}" merge-base --is-ancestor "${commit}" "${current_commit}"; then
+    contained_commit="${commit}"
+    break
+  fi
+done
+
+required_short="$(git -C "${android_dir}" rev-parse --short "${required_commit}")"
+echo "Newest official Android baseline for core ${core_base}: ${required_short}"
+
+if [[ -z "${contained_commit}" ]]; then
   cat >&2 <<MSG
-Android submodule is behind the required official Android baseline for this core version.
+Android submodule does not contain any official Android baseline for this core version.
 
 Current submodule: ${current_short}
-Required official baseline: ${required_short} (${core_base})
+Newest matching official baseline: ${required_short} (${core_base})
 Official ${official_ref} head: ${official_head_short} (${official_head_version})
 
 Run: CAGEDBIRD_ANDROID_TARGET_COMMIT=${required_commit} scripts/ci/sync-android-submodule.sh
@@ -61,6 +69,8 @@ then update the parent repository submodule pointer.
 MSG
   exit 1
 fi
+contained_short="$(git -C "${android_dir}" rev-parse --short "${contained_commit}")"
+echo "Contained official Android baseline for core ${core_base}: ${contained_short}"
 
 if [[ -n "${android_base}" && "${android_base}" != "${core_base}" ]]; then
   cat >&2 <<MSG
@@ -74,4 +84,4 @@ MSG
   exit 1
 fi
 
-echo "Android submodule is synced: ${current_short} contains official baseline ${required_short}, version base ${core_base}."
+echo "Android submodule is synced: ${current_short} contains official baseline ${contained_short}, version base ${core_base}."

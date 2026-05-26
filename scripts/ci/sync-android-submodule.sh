@@ -23,13 +23,29 @@ git -C "${android_dir}" fetch "${fork_remote}" "${android_branch}" || true
 if [[ -z "${target_commit}" ]]; then
   core_version="$(scripts/ci/resolve-cagedbird-version.sh)"
   core_base="${core_version%%-cagedbird.*}"
+  current_branch_commit=""
+  if git -C "${android_dir}" rev-parse -q --verify "refs/heads/${android_branch}" >/dev/null; then
+    current_branch_commit="$(git -C "${android_dir}" rev-parse "refs/heads/${android_branch}")"
+  elif git -C "${android_dir}" rev-parse -q --verify "refs/remotes/${fork_remote}/${android_branch}" >/dev/null; then
+    current_branch_commit="$(git -C "${android_dir}" rev-parse "refs/remotes/${fork_remote}/${android_branch}")"
+  fi
+  newest_matching=""
   while read -r commit; do
     version="$(git -C "${android_dir}" show "${commit}:version.properties" 2>/dev/null | awk -F= '$1 == "VERSION_NAME" {print $2}' | tail -n1 || true)"
-    if [[ "${version}" == "${core_base}" ]]; then
+    if [[ "${version}" != "${core_base}" ]]; then
+      continue
+    fi
+    if [[ -z "${newest_matching}" ]]; then
+      newest_matching="${commit}"
+    fi
+    if [[ -n "${current_branch_commit}" ]] && git -C "${android_dir}" merge-base --is-ancestor "${commit}" "${current_branch_commit}"; then
       target_commit="${commit}"
       break
     fi
   done < <(git -C "${android_dir}" rev-list --max-count=200 "${official_remote}/${official_ref}")
+  if [[ -z "${target_commit}" ]]; then
+    target_commit="${newest_matching}"
+  fi
   if [[ -z "${target_commit}" ]]; then
     echo "Could not find Android ${official_ref} commit matching core base ${core_base}" >&2
     exit 1
