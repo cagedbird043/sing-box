@@ -66,6 +66,7 @@ type tailscalePeer struct {
 type tailscalePingRequest struct {
 	EndpointTag string `json:"endpointTag"`
 	PeerIP      string `json:"peerIP"`
+	ReSTUN      bool   `json:"restun,omitempty"`
 }
 
 type tailscalePingResponse struct {
@@ -81,6 +82,8 @@ func tailscaleRouter(server *Server) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/status", getTailscaleStatus(server))
 	r.Post("/ping", startTailscalePing(server))
+	r.Post("/restun", reSTUNTailscale(server))
+	r.Post("/rebind", rebindTailscale(server))
 	return r
 }
 
@@ -216,6 +219,14 @@ func startTailscalePing(server *Server) func(w http.ResponseWriter, r *http.Requ
 		ctx, cancel := context.WithTimeout(r.Context(), tailscalePingTimeout)
 		defer cancel()
 
+		if request.ReSTUN {
+			if err := provider.ReSTUNTailscale(ctx); err != nil {
+				render.Status(r, http.StatusServiceUnavailable)
+				render.JSON(w, r, newError(err.Error()))
+				return
+			}
+		}
+
 		results := make(chan *adapter.TailscalePingResult, 1)
 		errorsChan := make(chan error, 1)
 		go func() {
@@ -249,6 +260,55 @@ func startTailscalePing(server *Server) func(w http.ResponseWriter, r *http.Requ
 			render.Status(r, http.StatusGatewayTimeout)
 			render.JSON(w, r, newError(ctx.Err().Error()))
 		}
+	}
+}
+
+type tailscaleRefreshRequest struct {
+	EndpointTag string `json:"endpointTag"`
+}
+
+type tailscaleRefreshResponse struct {
+	OK bool `json:"ok"`
+}
+
+func reSTUNTailscale(server *Server) func(w http.ResponseWriter, r *http.Request) {
+	return tailscaleRefresh(server, func(ctx context.Context, provider adapter.TailscaleEndpoint) error {
+		return provider.ReSTUNTailscale(ctx)
+	})
+}
+
+func rebindTailscale(server *Server) func(w http.ResponseWriter, r *http.Request) {
+	return tailscaleRefresh(server, func(ctx context.Context, provider adapter.TailscaleEndpoint) error {
+		return provider.RebindTailscale(ctx)
+	})
+}
+
+func tailscaleRefresh(server *Server, action func(context.Context, adapter.TailscaleEndpoint) error) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var request tailscaleRefreshRequest
+		if err := render.DecodeJSON(r.Body, &request); err != nil {
+			render.Status(r, http.StatusBadRequest)
+			render.JSON(w, r, ErrBadRequest)
+			return
+		}
+		provider, err := tailscaleEndpointByTag(server, request.EndpointTag)
+		if err != nil {
+			if errors.Is(err, errTailscaleEndpointNotFound) {
+				render.Status(r, http.StatusNotFound)
+			} else {
+				render.Status(r, http.StatusBadRequest)
+			}
+			render.JSON(w, r, newError(err.Error()))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), tailscaleStatusTimeout)
+		defer cancel()
+		if err := action(ctx, provider); err != nil {
+			render.Status(r, http.StatusServiceUnavailable)
+			render.JSON(w, r, newError(err.Error()))
+			return
+		}
+		render.JSON(w, r, &tailscaleRefreshResponse{OK: true})
 	}
 }
 

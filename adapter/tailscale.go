@@ -5,6 +5,8 @@ import "context"
 type TailscaleEndpoint interface {
 	SubscribeTailscaleStatus(ctx context.Context, fn func(*TailscaleEndpointStatus)) error
 	StartTailscalePing(ctx context.Context, peerIP string, fn func(*TailscalePingResult)) error
+	ReSTUNTailscale(ctx context.Context) error
+	RebindTailscale(ctx context.Context) error
 	SetTailscaleExitNode(ctx context.Context, stableID string) error
 }
 

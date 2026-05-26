@@ -43,6 +43,24 @@ func (t *Endpoint) StartTailscalePing(ctx context.Context, peerIP string, fn fun
 	}
 }
 
+func (t *Endpoint) ReSTUNTailscale(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	return t.server.ExportLocalBackend().DebugReSTUN()
+}
+
+func (t *Endpoint) RebindTailscale(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	return t.server.ExportLocalBackend().DebugRebind()
+}
+
 func convertPingResult(result *ipnstate.PingResult) *adapter.TailscalePingResult {
 	return &adapter.TailscalePingResult{
 		LatencyMs:      result.LatencySeconds * 1000,
