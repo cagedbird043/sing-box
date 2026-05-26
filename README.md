@@ -6,6 +6,32 @@
 
 The universal proxy platform.
 
+## Cagedbird Android builds / Obtainium
+
+中文：Android 用户推荐使用 [Obtainium](https://github.com/ImranR98/Obtainium) 从本仓库的 GitHub Releases 获取更新。添加应用时使用仓库地址：
+
+```text
+https://github.com/cagedbird043/sing-box
+```
+
+建议只匹配 Android APK 产物；如果 Obtainium 要求填写 APK 过滤规则，可使用：
+
+```text
+.*android.*\.apk
+```
+
+English: Android users are encouraged to use [Obtainium](https://github.com/ImranR98/Obtainium) to track APK updates from this repository's GitHub Releases. Add this repository URL as the source:
+
+```text
+https://github.com/cagedbird043/sing-box
+```
+
+If Obtainium asks for an APK filter, use:
+
+```text
+.*android.*\.apk
+```
+
 [![Packaging status](https://repology.org/badge/vertical-allrepos/sing-box.svg)](https://repology.org/project/sing-box/versions)
 
 ## Documentation
