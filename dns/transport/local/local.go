@@ -88,7 +88,7 @@ func (t *Transport) PreferredDomain(domain string) bool {
 			return true
 		}
 	}
-	return t.hasNeighborHost(domain)
+	return false
 }
 
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
