@@ -21,7 +21,7 @@ cleanup_build_tag() {
 trap cleanup_build_tag EXIT
 git tag "${build_tag}" -f
 
-android_app_branch="${CAGEDBIRD_ANDROID_APP_BRANCH:-dev}"
+android_app_branch="${CAGEDBIRD_ANDROID_APP_BRANCH:-cagedbird/stable-1.13}"
 echo "Using Android app branch: ${android_app_branch}"
 git -C clients/android fetch --depth 1 origin "${android_app_branch}"
 git -C clients/android checkout --detach FETCH_HEAD
