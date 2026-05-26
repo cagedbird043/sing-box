@@ -5,9 +5,10 @@ Follow this file for all work under this tree.
 
 ## Branch model
 
-- Treat `upstream/testing` as the clean upstream baseline.
+- Production follows upstream stable tags, not `upstream/testing`. Current production branch: `cagedbird/stable-1.13`, based on `v1.13.12`.
+- `cagedbird/feature-base` is allowed to track alpha/testing for experiments only; do not use it as the default release line.
 - Keep local upstream-tracking branches (`testing`, `stable`, `oldstable`, `unstable`) clean unless the user explicitly says otherwise.
-- Do personal work on `cagedbird/...` branches; the current feature branch is `cagedbird/feature-base`.
+- Do personal work on `cagedbird/...` branches.
 - It is acceptable for the personal branch to contain more than one local commit. The invariant is that upstream remains a clean base and local changes are easy to inspect, rebase, drop, or replay.
 
 ## Current local feature intent
@@ -20,48 +21,54 @@ The intended shape is:
 - no wholesale merge of `reF1nd/sing-box`;
 - selectively port only the provider/subscription closure needed for this feature.
 
-The main provider implementation commit currently rebased on upstream is:
+The main provider implementation is the local rebased commit on the active cagedbird branch:
 
-- `666bdb5c Add native outbound providers for subscription profiles`
+- stable line now has `Add native outbound providers for subscription profiles` directly above `v1.13.12`; do not assume the old alpha commit hash applies after migration.
 
-That commit adds top-level `providers`, provider registry/manager, remote/local/inline providers, Clash/sing-box/SIP008/raw parsers, cache restore, and selector/urltest provider membership. Other local commits add cagedbird CI/release automation, Android app tracking, hosts providers, and local Tailscale UI/API helpers.
+That implementation adds top-level `providers`, provider registry/manager, remote/local/inline providers, Clash/sing-box/SIP008/raw parsers, cache restore, and selector/urltest provider membership. Other local commits add cagedbird CI/release automation, Android app tracking, hosts providers, and local Tailscale UI/API helpers.
 
 ## Rebase/update procedure
 
-When updating to a new upstream `testing`:
+For production updates, prefer stable tags:
 
 1. Fetch first:
    ```bash
-   git fetch upstream origin --prune
+   git fetch upstream origin --tags --prune
    git submodule update --init --recursive clients/android
    ```
 2. Keep upstream-tracking branches (`testing`, `stable`, `oldstable`, `unstable`) aligned with upstream and unmodified. Do not commit personal changes there.
-3. Rebase the personal branch on the new baseline:
+3. Rebase or replay the personal stable branch on the chosen stable tag, currently the `1.13.x` line:
    ```bash
-   git switch cagedbird/feature-base
-   git rebase upstream/testing
+   git switch cagedbird/stable-1.13
+   # Example for next stable tag:
+   git rebase --onto v1.13.N v1.13.(N-1)
    ```
+   If replaying by cherry-pick is cleaner, keep the same invariant: upstream tag is the clean base; cagedbird commits sit above it.
 4. Resolve conflicts by preserving the smallest native provider delta. Do not re-import unrelated `reF1nd` features.
-5. Always sync the Android submodule after a core rebase or upstream alpha bump:
+5. Always sync the Android submodule after a core rebase or stable tag move:
    ```bash
-   CAGEDBIRD_PUSH_ANDROID_BRANCH=1 scripts/ci/sync-android-submodule.sh
+   CAGEDBIRD_ANDROID_BRANCH=cagedbird/stable-1.13 scripts/ci/sync-android-submodule.sh
    git add clients/android
    ```
-   This rebases `clients/android` branch `fix/per-app-proxy-vpn-builder` onto official Android `dev`, runs the sync check, optionally force-pushes the Android fork branch, and updates the parent gitlink.
+   Use `CAGEDBIRD_PUSH_ANDROID_BRANCH=1` only when the Android fork branch itself was rebased and should be pushed.
 6. Verify before pushing the parent branch:
    ```bash
    scripts/ci/check-android-submodule-sync.sh
-   go test -tags 'with_gvisor with_tailscale with_clash_api' ./protocol/tailscale ./experimental/clashapi ./dns/transport/hosts
+   go test ./adapter/provider ./provider/parser ./provider/remote ./provider/local ./protocol/group ./option ./experimental/clashapi ./dns/transport/hosts
+   go test -tags with_gvisor ./protocol/tailscale
+   go build ./cmd/sing-box
    ```
 7. Push the personal branch. Use force-with-lease only after a rebase:
    ```bash
-   git push --force-with-lease origin cagedbird/feature-base
+   git push --force-with-lease origin cagedbird/stable-1.13
    ```
+
+Testing/alpha branch rule: `cagedbird/feature-base` may still be rebased on `upstream/testing`, but it is experimental and must not silently replace the stable production branch.
 
 
 ## Android submodule rule
 
-`clients/android` is intentionally pointed at the cagedbird Android fork branch `fix/per-app-proxy-vpn-builder`, not directly at upstream Android `dev`. The parent repository stores a gitlink, so CI will fail if the Android fork branch contains an older upstream baseline than the core release baseline.
+`clients/android` is intentionally pointed at the cagedbird Android fork, not directly at upstream Android `dev`. For the stable production line, use Android branch `cagedbird/stable-1.13`. The parent repository stores a gitlink, so CI will fail if the Android fork branch contains an older upstream baseline than the core release baseline.
 
 Do not manually guess or hand-edit the Android submodule pointer. Use:
 
