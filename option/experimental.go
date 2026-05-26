@@ -15,6 +15,7 @@ type CacheFileOptions struct {
 	CacheID     string             `json:"cache_id,omitempty"`
 	StoreFakeIP bool               `json:"store_fakeip,omitempty"`
 	StoreRDRC   bool               `json:"store_rdrc,omitempty"`
+	StoreDNS    bool               `json:"store_dns,omitempty"`
 	RDRCTimeout badoption.Duration `json:"rdrc_timeout,omitempty"`
 }
 
