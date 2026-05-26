@@ -5,9 +5,10 @@ Follow this file for all work under this tree.
 
 ## Branch model
 
-- Treat `upstream/testing` as the clean upstream baseline.
-- Keep local upstream-tracking branches (`testing`, `stable`, `oldstable`, `unstable`) clean unless the user explicitly says otherwise.
-- Do personal work on `cagedbird/...` branches; the current feature branch is `cagedbird/feature-base`.
+- Treat the latest official upstream alpha tag (for example `v1.14.0-alpha.N`) as the production baseline, not arbitrary `upstream/testing` HEAD.
+- Keep `upstream/alpha` as a clean local marker branch pointing exactly at the chosen official alpha tag.
+- Keep upstream-tracking branches (`testing`, `stable`, `oldstable`, `unstable`, `upstream/alpha`) clean unless the user explicitly says otherwise.
+- Do personal work on `cagedbird/...` branches; the current production branch is `cagedbird/alpha`.
 - It is acceptable for the personal branch to contain more than one local commit. The invariant is that upstream remains a clean base and local changes are easy to inspect, rebase, drop, or replay.
 
 ## Current local feature intent
@@ -20,30 +21,34 @@ The intended shape is:
 - no wholesale merge of `reF1nd/sing-box`;
 - selectively port only the provider/subscription closure needed for this feature.
 
-The current implementation commit is:
+The provider implementation commit in the current floating patch stack is named:
 
-- `3d2968c7 Add native outbound providers for subscription profiles`
+- `Add native outbound providers for subscription profiles`
 
-That commit adds top-level `providers`, provider registry/manager, remote/local/inline providers, Clash/sing-box/SIP008/raw parsers, cache restore, and selector/urltest provider membership.
+That patch adds top-level `providers`, provider registry/manager, remote/local/inline providers, Clash/sing-box/SIP008/raw parsers, cache restore, and selector/urltest provider membership.
 
 ## Rebase/update procedure
 
-When updating to a new upstream `testing`:
+When updating to a new official alpha tag:
 
 1. Fetch first:
    ```bash
-   git fetch upstream origin --prune
+   git fetch upstream origin --tags --prune
    ```
-2. Keep upstream-tracking `testing` aligned with upstream, not locally modified.
-3. Rebase the personal branch on the new baseline:
+2. Pick the latest official upstream alpha tag and move only the clean marker branch:
    ```bash
-   git switch cagedbird/feature-base
-   git rebase upstream/testing
+   git branch -f upstream/alpha v1.14.0-alpha.N
    ```
-4. Resolve conflicts by preserving the smallest native provider delta. Do not re-import unrelated `reF1nd` features.
-5. Verify, then push the personal branch. Use force-with-lease only after a rebase:
+3. Rebase or replay the personal branch on the chosen alpha tag:
    ```bash
-   git push --force-with-lease origin cagedbird/feature-base
+   git switch cagedbird/alpha
+   git rebase upstream/alpha
+   ```
+4. Resolve conflicts by preserving the smallest cagedbird delta. Do not backport large future-version subsystems into older stable branches just to satisfy current templates.
+5. Keep `clients/android` on `cagedbird/alpha`, based on official Android `upstream/dev` for the matching alpha baseline plus the per-app VPN fix.
+6. Verify, then push the personal branch. Use force-with-lease only after a rebase:
+   ```bash
+   git push --force-with-lease origin cagedbird/alpha
    ```
 
 ## Do not port these from reF1nd unless explicitly requested
