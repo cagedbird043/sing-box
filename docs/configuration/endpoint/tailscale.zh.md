@@ -23,6 +23,7 @@ icon: material/new-box
   "auth_key": "",
   "force_login": false,
   "control_url": "",
+  "listen_port": 0,
   "ephemeral": false,
   "hostname": "",
   "accept_routes": false,
@@ -72,6 +73,14 @@ icon: material/new-box
 协调服务器 URL。
 
 默认使用 `https://controlplane.tailscale.com`。
+
+#### listen_port
+
+!!! question "自 sing-box 1.14.0 起"
+
+用于 WireGuard 和 Tailscale 点对点流量的 UDP 监听端口。
+
+为零时自动选择端口。
 
 #### ephemeral
 

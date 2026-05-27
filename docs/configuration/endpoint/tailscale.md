@@ -23,6 +23,7 @@ icon: material/new-box
   "auth_key": "",
   "force_login": false,
   "control_url": "",
+  "listen_port": 0,
   "ephemeral": false,
   "hostname": "",
   "accept_routes": false,
@@ -73,6 +74,14 @@ This is useful for unattended first enrollment with `auth_key` on platforms wher
 The coordination server URL.
 
 `https://controlplane.tailscale.com` is used by default.
+
+#### listen_port
+
+!!! question "Since sing-box 1.14.0"
+
+UDP port to listen on for WireGuard and peer-to-peer Tailscale traffic.
+
+If zero, a port is automatically selected.
 
 #### ephemeral
 
