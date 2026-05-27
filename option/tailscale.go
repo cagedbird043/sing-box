@@ -18,6 +18,7 @@ type TailscaleEndpointOptions struct {
 	AuthKey                    string                     `json:"auth_key,omitempty"`
 	ForceLogin                 bool                       `json:"force_login,omitempty"`
 	ControlURL                 string                     `json:"control_url,omitempty"`
+	ListenPort                 uint16                     `json:"listen_port,omitempty"`
 	Ephemeral                  bool                       `json:"ephemeral,omitempty"`
 	Hostname                   string                     `json:"hostname,omitempty"`
 	AcceptRoutes               bool                       `json:"accept_routes,omitempty"`
