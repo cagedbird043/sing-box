@@ -204,6 +204,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		server: &tsnet.Server{
 			Dir:      stateDirectory,
 			Hostname: hostname,
+			Port:     options.ListenPort,
 			Logf: func(format string, args ...any) {
 				logger.Trace(fmt.Sprintf(format, args...))
 			},
@@ -463,7 +464,7 @@ func (t *Endpoint) postStart() error {
 			t.logger.Warn("SSH server degraded: ", degraded)
 		}
 	}
-	localBackend := t.server.ExportLocalBackend()
+	localBackend = t.server.ExportLocalBackend()
 	err = t.editPrefs(sshEnabled)
 	if err != nil {
 		return err
