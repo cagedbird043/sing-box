@@ -6,10 +6,22 @@ on:
     branches:
       - cagedbird/alpha
       - cagedbird/**
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/cagedbird-*.yml'
   pull_request:
     branches:
       - cagedbird/alpha
       - cagedbird/**
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - '.github/workflows/cagedbird-*.yml'
 
 permissions:
   contents: read
