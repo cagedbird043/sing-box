@@ -54,7 +54,29 @@ When updating to a new official alpha tag:
 6. Verify, then push the personal branch. Use force-with-lease only after a rebase:
    ```bash
    git push --force-with-lease origin cagedbird/alpha
-   ```
+
+## Android APK CI
+
+The CI does NOT use the submodule pointer for Android builds. Instead,
+`scripts/ci/build-android-apks.sh` fetches the latest `dev` branch of
+`SagerNet/sing-box-for-android` at build time:
+
+```bash
+git -C clients/android fetch --depth 1 origin dev
+git -C clients/android checkout --detach FETCH_HEAD
+git -C clients/android submodule update --init --recursive
+```
+
+The third line is critical — without it, nested submodules like
+`termux-app/terminal-view` won't be checked out and Gradle will fail.
+
+## CI conventions
+
+- Commits that don't change Go source (`**.go`, `go.mod`, `go.sum`, `Makefile`)
+  should include `[skip ci]` in the commit message. The core workflow is
+  configured with `paths` filters to skip these.
+- Release is `workflow_dispatch` only — push to `cagedbird/alpha` does NOT
+  trigger a release. Use `gh workflow run cagedbird-release.yml` to release.
 
 ## Do not port these from reF1nd unless explicitly requested
 
@@ -63,7 +85,6 @@ When updating to a new official alpha tag:
 - DNS transport/group rewrites;
 - TLS certificate pinning fields;
 - proxy protocol;
-- Android update-source changes;
 - broad Clash API restart/update-source behavior;
 - unrelated dialer/TCP fields such as `tcp_keep_alive_count`.
 
