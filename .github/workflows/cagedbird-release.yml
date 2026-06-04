@@ -8,10 +8,7 @@ on:
         required: false
         default: auto
         type: string
-  push:
-    branches:
-      - cagedbird/alpha
-      - cagedbird/**
+  # Release only via manual workflow_dispatch — not on every push.
 
 permissions:
   contents: write
