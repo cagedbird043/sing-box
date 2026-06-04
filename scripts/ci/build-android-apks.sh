@@ -25,6 +25,7 @@ android_app_branch="${CAGEDBIRD_ANDROID_APP_BRANCH:-dev}"
 echo "Using Android app branch: ${android_app_branch}"
 git -C clients/android fetch --depth 1 origin "${android_app_branch}"
 git -C clients/android checkout --detach FETCH_HEAD
+git -C clients/android submodule update --init --recursive
 
 signing_mode="secret-stable-key"
 if [[ -n "${LOCAL_PROPERTIES:-}" || -n "${CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64:-}" ]]; then
