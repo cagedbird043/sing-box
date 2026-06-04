@@ -45,7 +45,12 @@ When updating to a new official alpha tag:
    git rebase upstream/alpha
    ```
 4. Resolve conflicts by preserving the smallest cagedbird delta. Do not backport large future-version subsystems into older stable branches just to satisfy current templates.
-5. Keep `clients/android` on `cagedbird/alpha`, based on official Android `upstream/dev` for the matching alpha baseline plus the per-app VPN fix.
+5. Verify submodule pointers match the upstream tag. `git rebase` does not update gitlinks:
+   ```bash
+   git ls-tree HEAD clients/android clients/apple
+   git ls-tree v1.14.0-alpha.N clients/android clients/apple
+   # Must be identical. If not: git checkout v1.14.0-alpha.N -- clients/android
+   ```
 6. Verify, then push the personal branch. Use force-with-lease only after a rebase:
    ```bash
    git push --force-with-lease origin cagedbird/alpha
