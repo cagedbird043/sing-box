@@ -31,7 +31,7 @@ type Adapter struct {
 	outboundsByTag map[string]adapter.Outbound
 	ticker         *time.Ticker
 	checking       atomic.Bool
-	history        adapter.URLTestHistoryStorage
+	history        *urltest.HistoryStorage
 	callbackAccess sync.Mutex
 	callbacks      list.List[adapter.ProviderUpdateCallback]
 
@@ -71,13 +71,9 @@ func NewAdapter(ctx context.Context, router adapter.Router, outbound adapter.Out
 }
 
 func (a *Adapter) Start() error {
-	a.history = service.FromContext[adapter.URLTestHistoryStorage](a.ctx)
+	a.history = service.PtrFromContext[urltest.HistoryStorage](a.ctx)
 	if a.history == nil {
-		if clashServer := service.FromContext[adapter.ClashServer](a.ctx); clashServer != nil {
-			a.history = clashServer.HistoryStorage()
-		} else {
-			a.history = urltest.NewHistoryStorage()
-		}
+		a.history = urltest.NewHistoryStorage()
 	}
 	go a.loopCheck()
 	return nil
