@@ -64,7 +64,7 @@ fi
 
 make lib_install
 export PATH="${PATH}:$(go env GOPATH)/bin"
-make lib_android
+go run -v ./cmd/internal/build_libbox -target android -platform android/arm64,android/amd64
 
 mkdir -p clients/android/app/libs
 cp -f ./libbox.aar clients/android/app/libs/
@@ -73,7 +73,7 @@ go run -v ./cmd/internal/update_android_version --ci --nightly
 
 (
   cd clients/android
-  ./gradlew :app:assembleOtherRelease
+  ./gradlew :app:assembleOtherRelease --configuration-cache --build-cache --parallel
 )
 
 out_dir="${OUT_DIR:-dist/cagedbird-android}"
