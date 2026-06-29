@@ -107,12 +107,14 @@ pkgbase = sing-box-cagedbird-bin
 	backup = etc/sing-box/config.json
 	source = sing-box.service::${raw_url}/sing-box.service
 	source = sing-box@.service::${raw_url}/sing-box@.service
+	source = sing-box-network-recover::${raw_url}/sing-box-network-recover
 	source = sing-box.sysusers::${raw_url}/sing-box.sysusers
 	source = sing-box.rules::${raw_url}/sing-box.rules
 	source = sing-box-split-dns.xml::${raw_url}/sing-box-split-dns.xml
 	source = config.json::${raw_url}/config.json
 	sha256sums = ${SHA_SERVICE}
 	sha256sums = ${SHA_SERVICE_AT}
+	sha256sums = ${SHA_RECOVER}
 	sha256sums = ${SHA_SYSUSERS}
 	sha256sums = ${SHA_RULES}
 	sha256sums = ${SHA_SPLIT_DNS}
@@ -152,10 +154,23 @@ else:
         flags=re.M,
     )
 text = re.sub(
+    r"source=\([\s\S]*?\n\)",
+    "source=(\"${_pkgname}.service::${_raw_url}/release/config/sing-box.service\"\n" +
+    "        \"${_pkgname}@.service::${_raw_url}/release/config/sing-box@.service\"\n" +
+    "        \"${_pkgname}-network-recover::${_raw_url}/release/config/sing-box-network-recover\"\n" +
+    "        \"${_pkgname}.sysusers::${_raw_url}/release/config/sing-box.sysusers\"\n" +
+    "        \"${_pkgname}.rules::${_raw_url}/release/config/sing-box.rules\"\n" +
+    "        \"${_pkgname}-split-dns.xml::${_raw_url}/release/config/sing-box-split-dns.xml\"\n" +
+    "        \"config.json::${_raw_url}/release/config/config.json\")",
+    text,
+    count=1,
+)
+text = re.sub(
     r"sha256sums=\([\s\S]*?\n\)",
     "sha256sums=(" +
     f"'{os.environ['SHA_SERVICE']}'\n" +
     f"            '{os.environ['SHA_SERVICE_AT']}'\n" +
+    f"            '{os.environ['SHA_RECOVER']}'\n" +
     f"            '{os.environ['SHA_SYSUSERS']}'\n" +
     f"            '{os.environ['SHA_RULES']}'\n" +
     f"            '{os.environ['SHA_SPLIT_DNS']}'\n" +
@@ -224,6 +239,7 @@ mkdir -p "${assets_dir}"
 
 SHA_SERVICE="$(sha256_url "${raw_url}/sing-box.service" "${assets_dir}/sing-box.service")"
 SHA_SERVICE_AT="$(sha256_url "${raw_url}/sing-box@.service" "${assets_dir}/sing-box@.service")"
+SHA_RECOVER="$(sha256_url "${raw_url}/sing-box-network-recover" "${assets_dir}/sing-box-network-recover")"
 SHA_SYSUSERS="$(sha256_url "${raw_url}/sing-box.sysusers" "${assets_dir}/sing-box.sysusers")"
 SHA_RULES="$(sha256_url "${raw_url}/sing-box.rules" "${assets_dir}/sing-box.rules")"
 SHA_SPLIT_DNS="$(sha256_url "${raw_url}/sing-box-split-dns.xml" "${assets_dir}/sing-box-split-dns.xml")"
@@ -249,7 +265,7 @@ AUR_PKGVER="$(derive_aur_pkgver)"
 AUR_PKGVER_UNDERSCORE="${AUR_PKGVER//-/_}"
 
 export RELEASE_VERSION SOURCE_URL SOURCE_REPO release_url raw_url AUR_EPOCH AUR_PKGVER_UNDERSCORE
-export SHA_SERVICE SHA_SERVICE_AT SHA_SYSUSERS SHA_RULES SHA_SPLIT_DNS SHA_CONFIG
+export SHA_SERVICE SHA_SERVICE_AT SHA_RECOVER SHA_SYSUSERS SHA_RULES SHA_SPLIT_DNS SHA_CONFIG
 export SHA_LINUX_AMD64 SHA_LINUX_ARM64 SHA_DARWIN_ARM64
 
 update_aur

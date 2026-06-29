@@ -48,6 +48,7 @@ install -Dm644 "$PROJECT/release/config/sing-box.confd" "$ROOT_DIR/etc/conf.d/si
 # Service files
 install -Dm644 "$PROJECT/release/config/sing-box.service" "$ROOT_DIR/usr/lib/systemd/system/sing-box.service"
 install -Dm644 "$PROJECT/release/config/sing-box@.service" "$ROOT_DIR/usr/lib/systemd/system/sing-box@.service"
+install -Dm755 "$PROJECT/release/config/sing-box-network-recover" "$ROOT_DIR/usr/lib/NetworkManager/dispatcher.d/90-sing-box-recover"
 
 # Completions
 install -Dm644 "$PROJECT/release/completions/sing-box.bash" "$ROOT_DIR/usr/share/bash-completion/completions/sing-box.bash"
