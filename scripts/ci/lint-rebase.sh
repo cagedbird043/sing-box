@@ -10,7 +10,7 @@ FAIL=0
 
 check_submodule() {
   local sm_path="$1"
-  local upstream_tag="${2:-$(git describe --tags --abbrev=0 upstream/alpha)}"
+  local upstream_tag="${2:-$(git describe --tags --abbrev=0 upstream/release)}"
 
   local head_commit
   head_commit=$(git ls-tree HEAD "$sm_path" | awk '{print $3}')

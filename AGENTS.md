@@ -5,9 +5,9 @@ Follow this file for all work under this tree.
 
 ## Branch model
 
-- Treat the latest official upstream alpha tag (for example `v1.14.0-alpha.N`) as the production baseline, not arbitrary `upstream/testing` HEAD.
-- Keep `upstream/alpha` as a clean local marker branch pointing exactly at the chosen official alpha tag.
-- Keep upstream-tracking branches (`testing`, `stable`, `oldstable`, `unstable`, `upstream/alpha`) clean unless the user explicitly says otherwise.
+- Treat the latest official upstream release tag (for example `v1.14.0-beta.12`) as the production baseline, never an arbitrary development-branch HEAD.
+- Keep `upstream/release` as a clean local marker branch pointing exactly at the chosen official release tag.
+- Keep upstream-tracking branches (`testing`, `stable`, `oldstable`, `unstable`, `upstream/release`) clean unless the user explicitly says otherwise.
 - Do personal work on `cagedbird/...` branches; the current production branch is `cagedbird/alpha`.
 - It is acceptable for the personal branch to contain more than one local commit. The invariant is that upstream remains a clean base and local changes are easy to inspect, rebase, drop, or replay.
 
@@ -29,31 +29,32 @@ That patch adds top-level `providers`, provider registry/manager, remote/local/i
 
 ## Rebase/update procedure
 
-When updating to a new official alpha tag:
+When updating to a new official release tag:
 
 1. Fetch first:
    ```bash
    git fetch upstream origin --tags --prune
    ```
-2. Pick the latest official upstream alpha tag and move only the clean marker branch:
+2. Pick the latest official upstream release tag and move only the clean marker branch:
    ```bash
-   git branch -f upstream/alpha v1.14.0-alpha.N
+   git branch -f upstream/release vX.Y.Z
    ```
-3. Rebase or replay the personal branch on the chosen alpha tag:
+3. Rebase or replay the personal branch on the chosen release tag:
    ```bash
    git switch cagedbird/alpha
-   git rebase upstream/alpha
+   git rebase upstream/release
    ```
 4. Resolve conflicts by preserving the smallest cagedbird delta. Do not backport large future-version subsystems into older stable branches just to satisfy current templates.
 5. Verify submodule pointers match the upstream tag. `git rebase` does not update gitlinks:
    ```bash
    git ls-tree HEAD clients/android clients/apple
-   git ls-tree v1.14.0-alpha.N clients/android clients/apple
-   # Must be identical. If not: git checkout v1.14.0-alpha.N -- clients/android
+   git ls-tree vX.Y.Z clients/android clients/apple
+   # Must be identical. If not: git checkout vX.Y.Z -- clients/android clients/apple
    ```
 6. Verify, then push the personal branch. Use force-with-lease only after a rebase:
    ```bash
    git push --force-with-lease origin cagedbird/alpha
+   ```
 
 ## Android APK CI
 
@@ -93,9 +94,11 @@ The third line is critical — without it, nested submodules like
 For provider/core changes, run at least:
 
 ```bash
-go test ./adapter/provider ./provider/parser ./provider/remote ./provider/local ./protocol/group ./option
-go list ./... | grep -v '^github.com/sagernet/sing-box/experimental/libbox$' | xargs go test
+go test ./...
+go test -tags with_gvisor ./protocol/tailscale
 go build ./cmd/sing-box
+scripts/ci/test-provider-core.sh
+scripts/ci/lint-rebase.sh
 ```
 
 Also run a remote-provider smoke when subscription parsing or provider lifecycle changes:
@@ -106,19 +109,6 @@ Also run a remote-provider smoke when subscription parsing or provider lifecycle
 - confirm logs show provider download, cache generation, `sing-box started`, and a generated outbound tag like `sub/local-ss`;
 - stop the HTTP server and confirm offline startup from cache still works.
 
-Known caveat at the time this file was added:
-
-```text
-go test ./...
-```
-
-fails only at `experimental/libbox` link time with:
-
-```text
-invalid reference to runtime/pprof.parseProcSelfMaps
-```
-
-Do not treat that existing libbox/toolchain link issue as evidence that the provider core patch is broken unless new evidence points there.
 
 ## Commit hygiene
 
