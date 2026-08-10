@@ -268,7 +268,19 @@ export RELEASE_VERSION SOURCE_URL SOURCE_REPO release_url raw_url AUR_EPOCH AUR_
 export SHA_SERVICE SHA_SERVICE_AT SHA_RECOVER SHA_SYSUSERS SHA_RULES SHA_SPLIT_DNS SHA_CONFIG
 export SHA_LINUX_AMD64 SHA_LINUX_ARM64 SHA_DARWIN_ARM64
 
-update_aur
-update_homebrew
+aur_status=0
+update_aur || aur_status=$?
+homebrew_status=0
+update_homebrew || homebrew_status=$?
+
+if (( aur_status != 0 )); then
+  echo "::error::AUR publish failed for ${RELEASE_VERSION}" >&2
+fi
+if (( homebrew_status != 0 )); then
+  echo "::error::Homebrew publish failed for ${RELEASE_VERSION}" >&2
+fi
+if (( aur_status != 0 || homebrew_status != 0 )); then
+  exit 1
+fi
 
 echo "Distribution metadata is up to date for ${RELEASE_VERSION}."
