@@ -68,7 +68,7 @@ func TestHostsRemoteProvider(t *testing.T) {
 	require.NoError(t, transport.Start(adapter.StartStateStart))
 	defer transport.Close()
 
-	require.Equal(t, []netip.Addr{netip.MustParseAddr("142.251.111.188")}, NewFile(cachePath).Lookup("mtalk.google.com"))
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("142.251.111.188")}, NewFile(context.Background(), cachePath).Lookup("mtalk.google.com"))
 	require.True(t, transport.(adapter.DNSTransportWithPreferredDomain).PreferredDomain("mtalk.google.com."))
 
 	response, err := transport.Exchange(context.Background(), hostsQuery("mtalk.google.com.", mDNS.TypeA))
@@ -103,7 +103,7 @@ func TestHostsRemoteProviderKeepsCacheOnUpdateFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, transport.Start(adapter.StartStateStart))
 	defer transport.Close()
-	require.Equal(t, []netip.Addr{netip.MustParseAddr("142.251.111.188")}, NewFile(cachePath).Lookup("mtalk.google.com"))
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("142.251.111.188")}, NewFile(context.Background(), cachePath).Lookup("mtalk.google.com"))
 }
 
 func hostsQuery(domain string, qType uint16) *mDNS.Msg {

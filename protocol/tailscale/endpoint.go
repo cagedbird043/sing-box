@@ -386,6 +386,7 @@ func (t *Endpoint) listenPacket(ctx context.Context, network string, address str
 		return udpConn, nil
 	}
 	return tun.NewUDPEgressConn(udpConn, egressPool), nil
+}
 func (t *Endpoint) startServer() error {
 	if !t.forceLogin {
 		return t.server.Start()
@@ -438,7 +439,9 @@ func (t *Endpoint) postStart() error {
 		})
 	}
 	localBackend := t.server.ExportLocalBackend()
-	localBackend.ExportEngine().(wgengine.ExportedUserspaceEngine).SetOnReconfigListener(t.onReconfig)
+	wgEngine := localBackend.ExportEngine().(wgengine.ExportedUserspaceEngine)
+	wgEngine.SetOnReconfigListener(t.onReconfig)
+	t.wgEngine = wgEngine
 
 	ipStack := t.server.ExportNetstack().ExportIPStack()
 	gErr := ipStack.SetSpoofing(tun.DefaultNIC, true)

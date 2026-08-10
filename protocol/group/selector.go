@@ -3,7 +3,7 @@ package group
 import (
 	"context"
 	"net"
- @theirs
+	"regexp"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"

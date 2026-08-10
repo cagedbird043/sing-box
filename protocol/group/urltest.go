@@ -15,25 +15,6 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-4: @theirs
-5: func (s *URLTest) InterfaceUpdated() {
-	group := s.group
-	if group == nil {
-		return
-	}
-	if group.pause.IsDevicePaused() || group.pause.IsNetworkPaused() {
-		return
-	}
-	go group.CheckOutbounds(true)
-}
-
-func (s *URLTest) isGroupActive() bool {
-	if !s.group.started {
-		return false
-	}
-	return time.Since(s.group.lastActive.Load()) <= s.group.idleTimeout
-}
-6: @theirs
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/batch"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -201,6 +182,7 @@ func (s *URLTest) InterfaceUpdated() {
 		return
 	}
 	go group.CheckOutbounds(true)
+}
 func (s *URLTest) isGroupActive() bool {
 	if !s.group.started {
 		return false
@@ -262,21 +244,6 @@ func (s *URLTest) NewPacketConnection(ctx context.Context, conn N.PacketConn, me
 	s.connection.NewPacketConnection(ctx, s, conn, metadata, onClose)
 }
 
-func (s *URLTest) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	s.group.Touch()
-	selected := s.group.selectedOutboundTCP
-	if selected == nil {
-		selected, _ = s.group.Select(N.NetworkTCP)
-	}
-	if selected == nil {
-		return nil, E.New("missing supported outbound")
-	}
-	if !common.Contains(selected.Network(), metadata.Network) {
-		return nil, E.New(metadata.Network, " is not supported by outbound: ", selected.Tag())
-	}
-	return selected.(adapter.DirectRouteOutbound).NewDirectRouteConnection(metadata, routeContext, timeout)
-}
-
 func (s *URLTest) onProviderUpdated(tag string) error {
 	_, loaded := s.providers[tag]
 	if !loaded {
@@ -335,6 +302,7 @@ func (s *URLTest) onProviderUpdated(tag string) error {
 	}
 	return nil
 }
+
 type URLTestGroup struct {
 	ctx                          context.Context
 	outbound                     adapter.OutboundManager

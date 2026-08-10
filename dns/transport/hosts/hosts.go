@@ -54,7 +54,7 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 			return nil, err
 		}
 		providers = append(providers, provider)
-		files = append(files, NewFile(provider.Path()))
+		files = append(files, NewFile(ctx, provider.Path()))
 	}
 	if options.Predefined != nil {
 		for _, entry := range options.Predefined.Entries() {
