@@ -253,8 +253,8 @@ derive_aur_pkgver() {
   short_commit="$(git rev-parse --short HEAD 2>/dev/null || true)"
   rev_count="$(git rev-list --count HEAD 2>/dev/null || true)"
 
-  if [[ "${RELEASE_VERSION}" =~ ^(.+)-cagedbird\.([0-9a-f]+)$ && -n "${short_commit}" && -n "${rev_count}" ]]; then
-    printf '%s-cagedbird.r%s.g%s\n' "${BASH_REMATCH[1]}" "${rev_count}" "${short_commit}"
+  if [[ "${RELEASE_VERSION}" =~ ^(.+)-cagedbird\.[0-9]+\.([0-9a-f]+)$ && -n "${short_commit}" && -n "${rev_count}" ]]; then
+    printf '%s-cagedbird.r%s.g%s\n' "${BASH_REMATCH[1]}" "${rev_count}" "${BASH_REMATCH[2]}"
   else
     printf '%s\n' "${RELEASE_VERSION}"
   fi

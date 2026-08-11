@@ -23,4 +23,5 @@ else
   base="${base_tag#v}"
 fi
 short_commit="$(git rev-parse --short HEAD)"
-printf '%s-cagedbird.%s\n' "${base}" "${short_commit}"
+commit_timestamp="$(TZ=UTC git log -1 --date='format-local:%Y%m%d%H%M%S' --format=%cd HEAD)"
+printf '%s-cagedbird.%s.%s\n' "${base}" "${commit_timestamp}" "${short_commit}"
