@@ -263,7 +263,7 @@ jobs:
           RELEASE_LATEST: "false"
 
   publish-distribution:
-    name: Publish AUR and Homebrew tap
+    name: Publish Homebrew tap
     needs:
       - version
       - publish
@@ -283,9 +283,9 @@ jobs:
             echo "enabled=true" >> "${GITHUB_OUTPUT}"
           else
             echo "enabled=false" >> "${GITHUB_OUTPUT}"
-            echo "::notice::CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY is not configured; skipping AUR/Homebrew publishing."
+            echo "::notice::CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY is not configured; skipping Homebrew publishing."
           fi
-      - name: Publish distribution metadata
+      - name: Publish Homebrew metadata
         if: steps.distribution-secret.outputs.enabled == 'true'
         run: scripts/ci/publish-cagedbird-distribution.sh
         env:
