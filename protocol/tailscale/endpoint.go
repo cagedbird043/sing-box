@@ -71,6 +71,10 @@ var (
 	_ tun.Port                            = (*Endpoint)(nil)
 )
 
+const tsnetForceLoginEnv = "TSNET_FORCE_LOGIN"
+
+var tsnetForceLoginStartMu sync.Mutex
+
 func init() {
 	version.SetVersion(strings.TrimSpace(tailscaleroot.VersionDotTxt) + "-0-(sing-box " + C.Version + ")")
 }
@@ -105,6 +109,7 @@ type Endpoint struct {
 	searchDomains atomic.Bool
 
 	acceptRoutes               bool
+	forceLogin                 bool
 	exitNode                   string
 	exitNodeAllowLANAccess     bool
 	advertiseRoutes            []netip.Prefix
@@ -232,6 +237,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			},
 		},
 		acceptRoutes:               options.AcceptRoutes,
+		forceLogin:                 options.ForceLogin,
 		exitNode:                   options.ExitNode,
 		exitNodeAllowLANAccess:     options.ExitNodeAllowLANAccess,
 		advertiseRoutes:            options.AdvertiseRoutes,
@@ -397,8 +403,40 @@ func (t *Endpoint) listenPacket(ctx context.Context, network string, address str
 	return tun.NewUDPEgressConn(udpConn, egressPool), nil
 }
 
+func (t *Endpoint) startServer() error {
+	if !t.forceLogin {
+		return t.server.Start()
+	}
+	// tsnet only consumes AuthKey in NoState when TSNET_FORCE_LOGIN is set before
+	// Server.Start. Keep the knob scoped to this start call so force_login remains
+	// a sing-box endpoint option instead of an Android/user environment setup step.
+	t.logger.Debug("force_login enabled; applying ", tsnetForceLoginEnv, " during tsnet start")
+	tsnetForceLoginStartMu.Lock()
+	defer tsnetForceLoginStartMu.Unlock()
+	restore, err := setTemporaryEnv(tsnetForceLoginEnv, "true")
+	if err != nil {
+		return err
+	}
+	defer restore()
+	return t.server.Start()
+}
+
+func setTemporaryEnv(name string, value string) (func(), error) {
+	oldValue, hadOldValue := os.LookupEnv(name)
+	if err := os.Setenv(name, value); err != nil {
+		return nil, err
+	}
+	return func() {
+		if hadOldValue {
+			_ = os.Setenv(name, oldValue)
+		} else {
+			_ = os.Unsetenv(name)
+		}
+	}, nil
+}
+
 func (t *Endpoint) postStart() error {
-	err := t.server.Start()
+	err := t.startServer()
 	if err != nil {
 		if t.systemTun != nil {
 			_ = t.systemTun.Close()
