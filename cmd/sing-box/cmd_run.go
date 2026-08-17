@@ -129,7 +129,7 @@ func mergeOptionsList(optionsList []*OptionsEntry) (option.Options, error) {
 	return mergedOptions, nil
 }
 
-func create(options option.Options) (*box.Box, context.CancelFunc, error) {
+func create(options option.Options) (*box.Box, context.CancelFunc, io.Closer, error) {
 	if disableColor {
 		if options.Log == nil {
 			options.Log = &option.LogOptions{}
@@ -144,7 +144,7 @@ func create(options option.Options) (*box.Box, context.CancelFunc, error) {
 	})
 	if err != nil {
 		cancel()
-		return nil, nil, E.Cause(err, "create service")
+		return nil, nil, nil, E.Cause(err, "create service")
 	}
 
 	osSignals := make(chan os.Signal, 1)
@@ -165,9 +165,15 @@ func create(options option.Options) (*box.Box, context.CancelFunc, error) {
 	finishStart()
 	if err != nil {
 		cancel()
-		return nil, nil, E.Cause(err, "start service")
+		return nil, nil, nil, E.Cause(err, "start service")
 	}
-	return instance, cancel, nil
+	dnsController, err := startPlatformDNS(options)
+	if err != nil {
+		cancel()
+		_ = instance.Close()
+		return nil, nil, nil, E.Cause(err, "configure Darwin TUN DNS")
+	}
+	return instance, cancel, dnsController, nil
 }
 
 func run() error {
@@ -187,7 +193,7 @@ func run() error {
 	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(osSignals)
 	for {
-		instance, cancel, createErr := create(options)
+		instance, cancel, dnsController, createErr := create(options)
 		if createErr != nil {
 			return createErr
 		}
@@ -199,6 +205,11 @@ func run() error {
 				if err != nil {
 					log.Error(E.Cause(err, "reload service"))
 					continue
+				}
+			}
+			if dnsController != nil {
+				if closeErr := dnsController.Close(); closeErr != nil {
+					log.Error(E.Cause(closeErr, "restore Darwin DNS"))
 				}
 			}
 			cancel()
