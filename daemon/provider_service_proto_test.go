@@ -16,7 +16,7 @@ func TestProviderServiceDescriptor(t *testing.T) {
 		name            protoreflect.Name
 		serverStreaming bool
 	}{
-		{"GetProviderServiceInfo", false},
+		{"GetServiceInfo", false},
 		{"ListProviders", false},
 		{"GetProvider", false},
 		{"SubscribeProviders", true},

@@ -284,14 +284,14 @@ func TestProviderServiceAuthenticationAndSubscription(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = connection.Close() })
 	client := NewProviderServiceClient(connection)
-	if _, err = client.GetProviderServiceInfo(context.Background(), &emptypb.Empty{}); status.Code(err) != codes.Unauthenticated {
+	if _, err = client.GetServiceInfo(context.Background(), &emptypb.Empty{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("expected unauthenticated probe, got %v", err)
 	}
 	if _, err = client.RefreshProvider(context.Background(), &ProviderActionRequest{ProviderTag: "sub"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("expected unauthenticated action, got %v", err)
 	}
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer test-secret")
-	info, err := client.GetProviderServiceInfo(ctx, &emptypb.Empty{})
+	info, err := client.GetServiceInfo(ctx, &emptypb.Empty{})
 	if err != nil || info.ProtocolVersion != ProviderServiceProtocolVersion {
 		t.Fatalf("authenticated probe failed: %+v, %v", info, err)
 	}

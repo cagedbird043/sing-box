@@ -25,7 +25,7 @@ func TestProviderServiceGRPCWebAuthentication(t *testing.T) {
 		t.Helper()
 		httpRequest, err := http.NewRequest(
 			http.MethodPost,
-			server.URL+daemon.ProviderService_GetProviderServiceInfo_FullMethodName,
+			server.URL+daemon.ProviderService_GetServiceInfo_FullMethodName,
 			bytes.NewReader(grpcDataFrame(nil)),
 		)
 		if err != nil {
@@ -61,7 +61,7 @@ func TestProviderServiceGRPCWebAuthentication(t *testing.T) {
 
 func TestProviderServiceWebSocketAuthentication(t *testing.T) {
 	server, _ := newProviderTransportTestServer(t)
-	webSocketURL := "ws" + strings.TrimPrefix(server.URL, "http") + daemon.ProviderService_GetProviderServiceInfo_FullMethodName
+	webSocketURL := "ws" + strings.TrimPrefix(server.URL, "http") + daemon.ProviderService_GetServiceInfo_FullMethodName
 	request := func(authorization string) grpcWebResponse {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

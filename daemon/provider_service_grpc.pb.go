@@ -20,19 +20,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ProviderService_GetProviderServiceInfo_FullMethodName = "/daemon.ProviderService/GetProviderServiceInfo"
-	ProviderService_ListProviders_FullMethodName          = "/daemon.ProviderService/ListProviders"
-	ProviderService_GetProvider_FullMethodName            = "/daemon.ProviderService/GetProvider"
-	ProviderService_SubscribeProviders_FullMethodName     = "/daemon.ProviderService/SubscribeProviders"
-	ProviderService_RefreshProvider_FullMethodName        = "/daemon.ProviderService/RefreshProvider"
-	ProviderService_HealthCheckProvider_FullMethodName    = "/daemon.ProviderService/HealthCheckProvider"
+	ProviderService_GetServiceInfo_FullMethodName      = "/daemon.ProviderService/GetServiceInfo"
+	ProviderService_ListProviders_FullMethodName       = "/daemon.ProviderService/ListProviders"
+	ProviderService_GetProvider_FullMethodName         = "/daemon.ProviderService/GetProvider"
+	ProviderService_SubscribeProviders_FullMethodName  = "/daemon.ProviderService/SubscribeProviders"
+	ProviderService_RefreshProvider_FullMethodName     = "/daemon.ProviderService/RefreshProvider"
+	ProviderService_HealthCheckProvider_FullMethodName = "/daemon.ProviderService/HealthCheckProvider"
 )
 
 // ProviderServiceClient is the client API for ProviderService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ProviderServiceClient interface {
-	GetProviderServiceInfo(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ProviderServiceInfo, error)
+	GetServiceInfo(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ProviderServiceInfo, error)
 	ListProviders(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ProviderList, error)
 	GetProvider(ctx context.Context, in *GetProviderRequest, opts ...grpc.CallOption) (*Provider, error)
 	SubscribeProviders(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ProviderList], error)
@@ -48,10 +48,10 @@ func NewProviderServiceClient(cc grpc.ClientConnInterface) ProviderServiceClient
 	return &providerServiceClient{cc}
 }
 
-func (c *providerServiceClient) GetProviderServiceInfo(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ProviderServiceInfo, error) {
+func (c *providerServiceClient) GetServiceInfo(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ProviderServiceInfo, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ProviderServiceInfo)
-	err := c.cc.Invoke(ctx, ProviderService_GetProviderServiceInfo_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, ProviderService_GetServiceInfo_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func (c *providerServiceClient) HealthCheckProvider(ctx context.Context, in *Pro
 // All implementations must embed UnimplementedProviderServiceServer
 // for forward compatibility.
 type ProviderServiceServer interface {
-	GetProviderServiceInfo(context.Context, *emptypb.Empty) (*ProviderServiceInfo, error)
+	GetServiceInfo(context.Context, *emptypb.Empty) (*ProviderServiceInfo, error)
 	ListProviders(context.Context, *emptypb.Empty) (*ProviderList, error)
 	GetProvider(context.Context, *GetProviderRequest) (*Provider, error)
 	SubscribeProviders(*emptypb.Empty, grpc.ServerStreamingServer[ProviderList]) error
@@ -137,8 +137,8 @@ type ProviderServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedProviderServiceServer struct{}
 
-func (UnimplementedProviderServiceServer) GetProviderServiceInfo(context.Context, *emptypb.Empty) (*ProviderServiceInfo, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetProviderServiceInfo not implemented")
+func (UnimplementedProviderServiceServer) GetServiceInfo(context.Context, *emptypb.Empty) (*ProviderServiceInfo, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetServiceInfo not implemented")
 }
 func (UnimplementedProviderServiceServer) ListProviders(context.Context, *emptypb.Empty) (*ProviderList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListProviders not implemented")
@@ -176,20 +176,20 @@ func RegisterProviderServiceServer(s grpc.ServiceRegistrar, srv ProviderServiceS
 	s.RegisterService(&ProviderService_ServiceDesc, srv)
 }
 
-func _ProviderService_GetProviderServiceInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _ProviderService_GetServiceInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ProviderServiceServer).GetProviderServiceInfo(ctx, in)
+		return srv.(ProviderServiceServer).GetServiceInfo(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: ProviderService_GetProviderServiceInfo_FullMethodName,
+		FullMethod: ProviderService_GetServiceInfo_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ProviderServiceServer).GetProviderServiceInfo(ctx, req.(*emptypb.Empty))
+		return srv.(ProviderServiceServer).GetServiceInfo(ctx, req.(*emptypb.Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -285,8 +285,8 @@ var ProviderService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*ProviderServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "GetProviderServiceInfo",
-			Handler:    _ProviderService_GetProviderServiceInfo_Handler,
+			MethodName: "GetServiceInfo",
+			Handler:    _ProviderService_GetServiceInfo_Handler,
 		},
 		{
 			MethodName: "ListProviders",

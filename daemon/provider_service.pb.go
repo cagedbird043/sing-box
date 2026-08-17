@@ -917,9 +917,9 @@ const file_daemon_provider_service_proto_rawDesc = "" +
 	"!PROVIDER_HEALTH_STATE_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dPROVIDER_HEALTH_STATE_UNKNOWN\x10\x01\x12#\n" +
 	"\x1fPROVIDER_HEALTH_STATE_REACHABLE\x10\x02\x12%\n" +
-	"!PROVIDER_HEALTH_STATE_UNREACHABLE\x10\x032\xd7\x03\n" +
-	"\x0fProviderService\x12O\n" +
-	"\x16GetProviderServiceInfo\x12\x16.google.protobuf.Empty\x1a\x1b.daemon.ProviderServiceInfo\"\x00\x12?\n" +
+	"!PROVIDER_HEALTH_STATE_UNREACHABLE\x10\x032\xcf\x03\n" +
+	"\x0fProviderService\x12G\n" +
+	"\x0eGetServiceInfo\x12\x16.google.protobuf.Empty\x1a\x1b.daemon.ProviderServiceInfo\"\x00\x12?\n" +
 	"\rListProviders\x12\x16.google.protobuf.Empty\x1a\x14.daemon.ProviderList\"\x00\x12=\n" +
 	"\vGetProvider\x12\x1a.daemon.GetProviderRequest\x1a\x10.daemon.Provider\"\x00\x12F\n" +
 	"\x12SubscribeProviders\x12\x16.google.protobuf.Empty\x1a\x14.daemon.ProviderList\"\x000\x01\x12P\n" +
@@ -969,13 +969,13 @@ var file_daemon_provider_service_proto_depIdxs = []int32{
 	6,  // 8: daemon.ProviderHealthCheckResult.provider:type_name -> daemon.Provider
 	13, // 9: daemon.ProviderHealthCheckResult.results:type_name -> daemon.ProviderNodeResult
 	9,  // 10: daemon.ProviderNodeResult.health:type_name -> daemon.ProviderNodeHealth
-	14, // 11: daemon.ProviderService.GetProviderServiceInfo:input_type -> google.protobuf.Empty
+	14, // 11: daemon.ProviderService.GetServiceInfo:input_type -> google.protobuf.Empty
 	14, // 12: daemon.ProviderService.ListProviders:input_type -> google.protobuf.Empty
 	3,  // 13: daemon.ProviderService.GetProvider:input_type -> daemon.GetProviderRequest
 	14, // 14: daemon.ProviderService.SubscribeProviders:input_type -> google.protobuf.Empty
 	4,  // 15: daemon.ProviderService.RefreshProvider:input_type -> daemon.ProviderActionRequest
 	4,  // 16: daemon.ProviderService.HealthCheckProvider:input_type -> daemon.ProviderActionRequest
-	2,  // 17: daemon.ProviderService.GetProviderServiceInfo:output_type -> daemon.ProviderServiceInfo
+	2,  // 17: daemon.ProviderService.GetServiceInfo:output_type -> daemon.ProviderServiceInfo
 	5,  // 18: daemon.ProviderService.ListProviders:output_type -> daemon.ProviderList
 	6,  // 19: daemon.ProviderService.GetProvider:output_type -> daemon.Provider
 	5,  // 20: daemon.ProviderService.SubscribeProviders:output_type -> daemon.ProviderList

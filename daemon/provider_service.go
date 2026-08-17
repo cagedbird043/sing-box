@@ -26,7 +26,7 @@ func NewProviderService(startedService *StartedService) *NativeProviderService {
 	return &NativeProviderService{startedService: startedService}
 }
 
-func (s *NativeProviderService) GetProviderServiceInfo(context.Context, *emptypb.Empty) (*ProviderServiceInfo, error) {
+func (s *NativeProviderService) GetServiceInfo(context.Context, *emptypb.Empty) (*ProviderServiceInfo, error) {
 	return &ProviderServiceInfo{
 		ProtocolVersion: ProviderServiceProtocolVersion,
 		Capabilities: []ProviderServiceCapability{

@@ -6,7 +6,7 @@ option go_package = "github.com/sagernet/sing-box/daemon";
 import "google/protobuf/empty.proto";
 
 service ProviderService {
-  rpc GetProviderServiceInfo(google.protobuf.Empty) returns (ProviderServiceInfo) {}
+  rpc GetServiceInfo(google.protobuf.Empty) returns (ProviderServiceInfo) {}
   rpc ListProviders(google.protobuf.Empty) returns (ProviderList) {}
   rpc GetProvider(GetProviderRequest) returns (Provider) {}
   rpc SubscribeProviders(google.protobuf.Empty) returns (stream ProviderList) {}
