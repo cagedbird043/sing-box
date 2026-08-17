@@ -168,9 +168,11 @@ func (s *CommandServer) Start() error {
 	}
 	s.grpcServer = grpc.NewServer(serverOptions...)
 	daemon.RegisterStartedServiceServer(s.grpcServer, s.StartedService)
+	daemon.RegisterProviderServiceServer(s.grpcServer, daemon.NewProviderService(s.StartedService))
 	daemon.RegisterManagedServiceServer(s.grpcServer, s.managedService)
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus(daemon.StartedService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus(daemon.ProviderService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
 	healthServer.SetServingStatus(daemon.ManagedService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
 	grpc_health_v1.RegisterHealthServer(s.grpcServer, healthServer)
 	go s.grpcServer.Serve(listener)

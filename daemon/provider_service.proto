@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package daemon;
+option go_package = "github.com/sagernet/sing-box/daemon";
+
+import "google/protobuf/empty.proto";
+
+service ProviderService {
+  rpc GetServiceInfo(google.protobuf.Empty) returns (ProviderServiceInfo) {}
+  rpc ListProviders(google.protobuf.Empty) returns (ProviderList) {}
+  rpc GetProvider(GetProviderRequest) returns (Provider) {}
+  rpc SubscribeProviders(google.protobuf.Empty) returns (stream ProviderList) {}
+  rpc RefreshProvider(ProviderActionRequest) returns (ProviderActionResult) {}
+  rpc HealthCheckProvider(ProviderActionRequest) returns (ProviderHealthCheckResult) {}
+}
+
+enum ProviderServiceCapability {
+  PROVIDER_SERVICE_CAPABILITY_UNSPECIFIED = 0;
+  PROVIDER_SERVICE_CAPABILITY_LIST = 1;
+  PROVIDER_SERVICE_CAPABILITY_SUBSCRIBE = 2;
+  PROVIDER_SERVICE_CAPABILITY_REFRESH = 3;
+  PROVIDER_SERVICE_CAPABILITY_HEALTH_CHECK = 4;
+}
+
+message ProviderServiceInfo {
+  uint32 protocol_version = 1;
+  repeated ProviderServiceCapability capabilities = 2;
+  reserved 3 to 15;
+}
+
+message GetProviderRequest {
+  string provider_tag = 1;
+  reserved 2 to 15;
+}
+
+message ProviderActionRequest {
+  string provider_tag = 1;
+  reserved 2 to 15;
+}
+
+message ProviderList {
+  string instance_id = 1;
+  uint64 revision = 2;
+  repeated Provider providers = 3;
+  reserved 4 to 15;
+}
+
+message Provider {
+  string tag = 1;
+  string type = 2;
+  int64 updated_at_ms = 3;
+  ProviderCapabilities capabilities = 4;
+  SubscriptionInfo subscription = 5;
+  repeated ProviderNode nodes = 6;
+  reserved 7 to 31;
+}
+
+message ProviderCapabilities {
+  bool can_refresh = 1;
+  bool can_health_check = 2;
+  bool has_subscription_info = 3;
+  reserved 4 to 15;
+}
+
+message SubscriptionInfo {
+  int64 upload_bytes = 1;
+  int64 download_bytes = 2;
+  int64 total_bytes = 3;
+  int64 expire_at_seconds = 4;
+  reserved 5 to 15;
+}
+
+enum ProviderHealthState {
+  PROVIDER_HEALTH_STATE_UNSPECIFIED = 0;
+  PROVIDER_HEALTH_STATE_UNKNOWN = 1;
+  PROVIDER_HEALTH_STATE_REACHABLE = 2;
+  PROVIDER_HEALTH_STATE_UNREACHABLE = 3;
+}
+
+message ProviderNodeHealth {
+  ProviderHealthState state = 1;
+  uint32 delay_ms = 2;
+  int64 checked_at_ms = 3;
+  reserved 4 to 15;
+}
+
+message ProviderNode {
+  string tag = 1;
+  string type = 2;
+  repeated string networks = 3;
+  ProviderNodeHealth health = 4;
+  reserved 5 to 15;
+}
+
+message ProviderActionResult {
+  string instance_id = 1;
+  uint64 revision = 2;
+  Provider provider = 3;
+  reserved 4 to 15;
+}
+
+message ProviderHealthCheckResult {
+  string instance_id = 1;
+  uint64 revision = 2;
+  Provider provider = 3;
+  repeated ProviderNodeResult results = 4;
+  reserved 5 to 15;
+}
+
+message ProviderNodeResult {
+  string node_tag = 1;
+  ProviderNodeHealth health = 2;
+  reserved 3 to 15;
+}
