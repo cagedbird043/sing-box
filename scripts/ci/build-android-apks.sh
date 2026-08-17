@@ -21,11 +21,14 @@ cleanup_build_tag() {
 trap cleanup_build_tag EXIT
 git tag "${build_tag}" -f
 
-android_app_branch="${CAGEDBIRD_ANDROID_APP_BRANCH:-dev}"
-echo "Using Android app branch: ${android_app_branch}"
-git -C clients/android fetch --depth 1 origin "${android_app_branch}"
-git -C clients/android checkout --detach FETCH_HEAD
-git -C clients/android submodule update --init --recursive
+android_app_revision="$(git rev-parse HEAD:clients/android)"
+git submodule update --init --recursive clients/android
+checked_out_android_revision="$(git -C clients/android rev-parse HEAD)"
+if [[ "${checked_out_android_revision}" != "${android_app_revision}" ]]; then
+  echo "Android app revision mismatch: expected ${android_app_revision}, got ${checked_out_android_revision}" >&2
+  exit 1
+fi
+echo "Using Android app revision: ${android_app_revision}"
 
 signing_mode="secret-stable-key"
 if [[ -n "${LOCAL_PROPERTIES:-}" || -n "${CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64:-}" ]]; then

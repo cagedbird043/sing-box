@@ -58,18 +58,16 @@ When updating to a new official release tag:
 
 ## Android APK CI
 
-The CI does NOT use the submodule pointer for Android builds. Instead,
-`scripts/ci/build-android-apks.sh` fetches the latest `dev` branch of
-`SagerNet/sing-box-for-android` at build time:
+Android release builds use the exact `clients/android` gitlink committed by the
+selected upstream release tag. `scripts/ci/build-android-apks.sh` initializes
+the submodule recursively and fails if its checked-out revision differs from
+the superproject gitlink.
 
-```bash
-git -C clients/android fetch --depth 1 origin dev
-git -C clients/android checkout --detach FETCH_HEAD
-git -C clients/android submodule update --init --recursive
-```
-
-The third line is critical — without it, nested submodules like
-`termux-app/terminal-view` won't be checked out and Gradle will fail.
+Do not fetch a moving Android `dev` branch during release builds. The Android
+application and `experimental/libbox` API evolve in lockstep; combining a
+newer Android application with an older release core can fail after the core
+library is generated. Recursive initialization remains required for nested
+submodules such as `termux-app/terminal-view`.
 
 ## CI conventions
 
