@@ -1,5 +1,9 @@
 # sing-box
 
+> 中文：本分支在官方上游 sing-box 的基础上提供全平台 Clash 订阅能力；除此之外，其余能力与官方上游保持一致。
+>
+> English: This branch adds cross-platform Clash subscription support on top of the official upstream sing-box; all other behavior is intended to remain identical to upstream.
+
 The universal proxy platform.
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/sing-box.svg)](https://repology.org/project/sing-box/versions)
