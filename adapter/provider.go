@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/sagernet/sing-box/log"
@@ -18,6 +19,18 @@ type Provider interface {
 	HealthCheck(ctx context.Context) (map[string]uint16, error)
 	RegisterCallback(callback ProviderUpdateCallback) *list.Element[ProviderUpdateCallback]
 	UnregisterCallback(element *list.Element[ProviderUpdateCallback])
+}
+
+var ErrProviderBusy = errors.New("provider is busy")
+
+type ProviderSnapshot struct {
+	Outbounds        []Outbound
+	UpdatedAt        time.Time
+	SubscriptionInfo *SubscriptionInfo
+}
+
+type ProviderSnapshotter interface {
+	ProviderSnapshot() ProviderSnapshot
 }
 
 type ProviderUpdater interface {

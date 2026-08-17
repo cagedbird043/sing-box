@@ -38,7 +38,6 @@ type ProviderLocal struct {
 	path        string
 	lastOutOpts []option.Outbound
 	lastEPOpts  []option.Endpoint
-	lastUpdated time.Time
 	watcher     *fswatch.Watcher
 
 	overrideDialer *option.OverrideDialerOptions
@@ -57,11 +56,8 @@ func NewProviderInline(ctx context.Context, router adapter.Router, logFactory lo
 		logger:  logger,
 	}
 	provider.RewriteDetourForProvider(options.Outbounds)
-	provider.UpdateOutbounds(nil, options.Outbounds)
-	if len(options.Endpoints) > 0 {
-		provider.RewriteDetourForProviderEndpoints(options.Endpoints)
-		provider.UpdateEndpoints(nil, options.Endpoints)
-	}
+	provider.RewriteDetourForProviderEndpoints(options.Endpoints)
+	provider.UpdateProvider(nil, options.Outbounds, nil, options.Endpoints, time.Time{}, nil)
 	return provider, nil
 }
 
@@ -88,11 +84,9 @@ func NewProviderLocal(ctx context.Context, router adapter.Router, logFactory log
 	watcher, err := fswatch.NewWatcher(fswatch.Options{
 		Path: []string{filePath},
 		Callback: func(path string) {
-			uErr := provider.reloadFile(path)
-			if uErr != nil {
-				logger.Error(E.Cause(uErr, "reload provider ", tag))
+			if err := provider.reloadFile(path); err != nil {
+				logger.Error(E.Cause(err, "reload provider ", tag))
 			}
-			provider.UpdateGroups()
 		},
 	})
 	if err != nil {
@@ -108,7 +102,6 @@ func (s *ProviderLocal) StartContext(ctx context.Context, startContext *adapter.
 		if err != nil {
 			return err
 		}
-		s.UpdateGroups()
 		if s.watcher != nil {
 			err := s.watcher.Start()
 			if err != nil {
@@ -119,13 +112,12 @@ func (s *ProviderLocal) StartContext(ctx context.Context, startContext *adapter.
 	return s.Adapter.Start()
 }
 
-func (s *ProviderLocal) UpdatedAt() time.Time {
-	return s.lastUpdated
-}
-
 func (s *ProviderLocal) reloadFile(path string) error {
+	s.StartUpdate()
+	defer s.FinishUpdate()
+	var updatedAt time.Time
 	if fileInfo, err := os.Stat(path); err == nil {
-		s.lastUpdated = fileInfo.ModTime()
+		updatedAt = fileInfo.ModTime()
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -135,10 +127,10 @@ func (s *ProviderLocal) reloadFile(path string) error {
 	if err != nil {
 		return err
 	}
-	s.UpdateOutbounds(s.lastOutOpts, outboundOpts)
+	s.UpdateProvider(s.lastOutOpts, outboundOpts, s.lastEPOpts, endpointOpts, updatedAt, nil)
 	s.lastOutOpts = outboundOpts
-	s.UpdateEndpoints(s.lastEPOpts, endpointOpts)
 	s.lastEPOpts = endpointOpts
+	s.UpdateGroups()
 	return nil
 }
 

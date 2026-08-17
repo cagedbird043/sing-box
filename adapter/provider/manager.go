@@ -20,12 +20,11 @@ var _ adapter.ProviderManager = (*Manager)(nil)
 type Manager struct {
 	logger        log.ContextLogger
 	registry      adapter.ProviderRegistry
-	access        sync.Mutex
+	access        sync.RWMutex
 	started       bool
 	stage         adapter.StartStage
 	providers     []adapter.Provider
 	providerByTag map[string]adapter.Provider
-	wg            sync.WaitGroup
 }
 
 func NewManager(logger logger.ContextLogger, registry adapter.ProviderRegistry) *Manager {
@@ -46,7 +45,7 @@ func (m *Manager) Start(stage adapter.StartStage) error {
 	}
 	m.started = true
 	m.stage = stage
-	providers := m.providers
+	providers := append([]adapter.Provider(nil), m.providers...)
 	m.access.Unlock()
 	if stage == adapter.StartStateStart && len(providers) > 0 {
 		startContext := adapter.NewHTTPStartContext()
@@ -69,13 +68,11 @@ func (m *Manager) Start(stage adapter.StartStage) error {
 func (m *Manager) Close() error {
 	monitor := taskmonitor.New(m.logger, C.StopTimeout)
 	m.access.Lock()
-	if !m.started {
-		m.access.Unlock()
-		return nil
-	}
 	m.started = false
+	m.stage = 0
 	providers := m.providers
 	m.providers = nil
+	clear(m.providerByTag)
 	m.access.Unlock()
 	var err error
 	for _, provider := range providers {
@@ -91,15 +88,15 @@ func (m *Manager) Close() error {
 }
 
 func (m *Manager) Providers() []adapter.Provider {
-	m.access.Lock()
-	defer m.access.Unlock()
-	return m.providers
+	m.access.RLock()
+	defer m.access.RUnlock()
+	return append([]adapter.Provider(nil), m.providers...)
 }
 
 func (m *Manager) Get(tag string) (adapter.Provider, bool) {
-	m.access.Lock()
+	m.access.RLock()
 	provider, found := m.providerByTag[tag]
-	m.access.Unlock()
+	m.access.RUnlock()
 	return provider, found
 }
 

@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -40,21 +40,19 @@ var _ adapter.Provider = (*ProviderRemote)(nil)
 
 type ProviderRemote struct {
 	provider.Adapter
-	ctx              context.Context
-	cancel           context.CancelFunc
-	logger           log.ContextLogger
-	outbound         adapter.OutboundManager
-	provider         adapter.ProviderManager
-	cacheFile        adapter.CacheFile
-	httpClient       *http.Client
-	hash             hash.HashType
-	lastEtag         string
-	lastOutOpts      []option.Outbound
-	lastEPOpts       []option.Endpoint
-	lastUpdated      time.Time
-	subscriptionInfo adapter.SubscriptionInfo
-	ticker           *time.Ticker
-	updating         atomic.Bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	logger       log.ContextLogger
+	outbound     adapter.OutboundManager
+	provider     adapter.ProviderManager
+	cacheFile    adapter.CacheFile
+	httpClient   *http.Client
+	hash         hash.HashType
+	lastEtag     string
+	lastOutOpts  []option.Outbound
+	lastEPOpts   []option.Endpoint
+	tickerAccess sync.Mutex
+	ticker       *time.Ticker
 
 	httpClientOptions *option.HTTPClientOptions
 	downloadDetour    string
@@ -134,7 +132,7 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 	}
 	startContext.Register(transport)
 	s.httpClient = &http.Client{Transport: transport}
-	if s.lastUpdated.IsZero() {
+	if s.UpdatedAt().IsZero() {
 		ctx = interrupt.ContextWithIsProviderConnection(ctx)
 		err := s.fetch(ctx, true)
 		if err != nil {
@@ -146,26 +144,30 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 }
 
 func (s *ProviderRemote) Update() error {
+	s.tickerAccess.Lock()
 	if s.ticker != nil {
 		s.ticker.Reset(s.updateInterval)
 	}
+	s.tickerAccess.Unlock()
 	ctx := interrupt.ContextWithIsProviderConnection(s.ctx)
 	return s.fetch(ctx, false)
 }
 
-func (s *ProviderRemote) UpdatedAt() time.Time {
-	return s.lastUpdated
-}
-
 func (s *ProviderRemote) SubscriptionInfo() adapter.SubscriptionInfo {
-	return s.subscriptionInfo
+	snapshot := s.ProviderSnapshot()
+	if snapshot.SubscriptionInfo == nil {
+		return adapter.SubscriptionInfo{}
+	}
+	return *snapshot.SubscriptionInfo
 }
 
 func (s *ProviderRemote) Close() error {
 	s.cancel()
+	s.tickerAccess.Lock()
 	if s.ticker != nil {
 		s.ticker.Stop()
 	}
+	s.tickerAccess.Unlock()
 	return common.Close(&s.Adapter)
 }
 
@@ -201,10 +203,10 @@ func (s *ProviderRemote) updateOnce() {
 }
 
 func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
-	if s.updating.Swap(true) {
-		return E.New("provider is updating")
+	if err := s.TryStartUpdate(); err != nil {
+		return err
 	}
-	defer s.updating.Store(false)
+	defer s.FinishUpdate()
 	s.logger.Debug("updating outbound provider ", s.Tag(), " from URL: ", s.url)
 	req, err := http.NewRequest(http.MethodGet, s.url, nil)
 	if err != nil {
@@ -221,13 +223,14 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	infoStr := resp.Header.Get("subscription-userinfo")
 	info, hasInfo := parseInfo(infoStr)
+	now := time.Now()
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotModified:
-		s.subscriptionInfo = info
-		s.lastUpdated = time.Now()
+		s.UpdateMetadata(now, &info)
 		if s.cacheFile != nil {
 			saveSub := s.cacheFile.LoadSubscription(s.Tag())
 			if saveSub != nil {
@@ -239,31 +242,27 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 						saveSub.Content = append([]byte(infoStr+"\n"), saveSub.Content[index+1:]...)
 					}
 				}
-				saveSub.LastUpdated = s.lastUpdated
+				saveSub.LastUpdated = now
 				if err := s.cacheFile.SaveSubscription(s.Tag(), saveSub); err != nil {
 					s.logger.Error("save outbound provider cache file: ", err)
 				}
 			}
 		}
 		if s.path != "" {
-			content, _ := json.Marshal(option.Options{
-				Outbounds: s.lastOutOpts,
-				Endpoints: s.lastEPOpts,
-			})
+			content, _ := json.Marshal(option.Options{Outbounds: s.lastOutOpts, Endpoints: s.lastEPOpts})
 			s.saveCacheFile(hasInfo, info, content)
 		}
+		s.UpdateGroups()
 		s.logger.Info("update outbound provider ", s.Tag(), ": not modified")
 		return nil
 	default:
 		return E.New("unexpected status: ", resp.Status)
 	}
-	defer resp.Body.Close()
 	contentRaw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
-	eTagHeader := resp.Header.Get("Etag")
-	if eTagHeader != "" {
+	if eTagHeader := resp.Header.Get("Etag"); eTagHeader != "" {
 		s.lastEtag = eTagHeader
 	}
 	content, _ := parser.DecodeBase64URLSafe(string(contentRaw))
@@ -274,27 +273,18 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 			content, _ = parser.DecodeBase64URLSafe(others)
 		}
 	}
-	if err := s.updateProviderFromContent(content); err != nil {
+	if err := s.updateProviderFromContent(content, now, &info); err != nil {
 		return err
 	}
-	s.UpdateGroups()
-	s.subscriptionInfo = info
-	s.lastUpdated = time.Now()
 	if s.path != "" || s.cacheFile != nil {
-		content, _ := json.Marshal(option.Options{
-			Outbounds: s.lastOutOpts,
-			Endpoints: s.lastEPOpts,
-		})
+		content, _ := json.Marshal(option.Options{Outbounds: s.lastOutOpts, Endpoints: s.lastEPOpts})
 		if s.path != "" {
 			s.saveCacheFile(hasInfo, info, content)
 		} else if hasInfo {
 			content = append([]byte(infoStr+"\n"), content...)
 		}
 		if s.cacheFile != nil {
-			saveSub := &adapter.SavedBinary{
-				LastUpdated: s.lastUpdated,
-				LastEtag:    s.lastEtag,
-			}
+			saveSub := &adapter.SavedBinary{LastUpdated: now, LastEtag: s.lastEtag}
 			if s.path != "" {
 				saveSub.Hash = s.hash
 			} else {
@@ -305,6 +295,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 			}
 		}
 	}
+	s.UpdateGroups()
 	s.logger.Info("updated outbound provider ", s.Tag())
 	return nil
 }
@@ -327,12 +318,7 @@ func (s *ProviderRemote) loadCacheFile() error {
 		if !exists {
 			return nil
 		}
-		file, err := os.Open(s.path)
-		if err != nil {
-			return err
-		}
-		content, err = io.ReadAll(file)
-		file.Close()
+		content, err = os.ReadFile(s.path)
 		if err != nil {
 			return err
 		}
@@ -344,11 +330,11 @@ func (s *ProviderRemote) loadCacheFile() error {
 			lastUpdated = saveSub.LastUpdated
 			lastEtag = saveSub.LastEtag
 		} else {
-			fs, err := os.Stat(s.path)
+			fileInfo, err := os.Stat(s.path)
 			if err != nil {
 				return err
 			}
-			lastUpdated = fs.ModTime()
+			lastUpdated = fileInfo.ModTime()
 		}
 	} else if saveSub != nil && len(saveSub.Content) > 0 {
 		content = saveSub.Content
@@ -357,28 +343,28 @@ func (s *ProviderRemote) loadCacheFile() error {
 	} else {
 		return nil
 	}
-	if err := s.loadFromContent(content); err != nil {
+	if err := s.loadFromContent(content, lastUpdated); err != nil {
 		return err
 	}
+	s.lastEtag = lastEtag
 	s.UpdateGroups()
-	s.lastUpdated, s.lastEtag = lastUpdated, lastEtag
 	return nil
 }
 
-func (s *ProviderRemote) loadFromContent(contentRaw []byte) error {
+func (s *ProviderRemote) loadFromContent(contentRaw []byte, updatedAt time.Time) error {
 	content, _ := parser.DecodeBase64URLSafe(string(contentRaw))
+	var info adapter.SubscriptionInfo
 	firstLine, others := getFirstLine(content)
-	if info, ok := parseInfo(firstLine); ok {
-		s.subscriptionInfo = info
+	if parsedInfo, ok := parseInfo(firstLine); ok {
+		info = parsedInfo
 		content, _ = parser.DecodeBase64URLSafe(others)
 	}
 	outboundOpts, endpointOpts, err := parser.ParseBoxSubscription(s.ctx, content)
 	if err != nil {
 		return err
 	}
-	s.UpdateOutbounds(s.lastOutOpts, outboundOpts)
+	s.UpdateProvider(s.lastOutOpts, outboundOpts, s.lastEPOpts, endpointOpts, updatedAt, &info)
 	s.lastOutOpts = outboundOpts
-	s.UpdateEndpoints(s.lastEPOpts, endpointOpts)
 	s.lastEPOpts = endpointOpts
 	return nil
 }
@@ -395,23 +381,27 @@ func pathExists(path string) (bool, error) {
 }
 
 func (s *ProviderRemote) loopUpdate() {
-	if time.Since(s.lastUpdated) < s.updateInterval {
+	updatedAt := s.UpdatedAt()
+	if time.Since(updatedAt) < s.updateInterval {
 		select {
 		case <-s.ctx.Done():
 			return
-		case <-time.After(time.Until(s.lastUpdated.Add(s.updateInterval))):
+		case <-time.After(time.Until(updatedAt.Add(s.updateInterval))):
 			s.updateOnce()
 		}
 	} else {
 		s.updateOnce()
 	}
+	s.tickerAccess.Lock()
 	s.ticker = time.NewTicker(s.updateInterval)
+	ticker := s.ticker
+	s.tickerAccess.Unlock()
 	for {
 		runtime.GC()
 		select {
 		case <-s.ctx.Done():
 			return
-		case <-s.ticker.C:
+		case <-ticker.C:
 			s.updateOnce()
 		}
 	}
@@ -436,7 +426,7 @@ func (s *ProviderRemote) saveCacheFile(hasInfo bool, info adapter.SubscriptionIn
 	filemanager.WriteFile(s.ctx, s.path, []byte(content), 0o666)
 }
 
-func (s *ProviderRemote) updateProviderFromContent(content string) error {
+func (s *ProviderRemote) updateProviderFromContent(content string, updatedAt time.Time, info *adapter.SubscriptionInfo) error {
 	outboundOpts, endpointOpts, err := parser.ParseSubscription(s.ctx, content, s.overrideDialer, s.overrideTLS, s.Tag())
 	if err != nil {
 		return err
@@ -447,9 +437,8 @@ func (s *ProviderRemote) updateProviderFromContent(content string) error {
 	endpointOpts = common.Filter(endpointOpts, func(it option.Endpoint) bool {
 		return (s.exclude == nil || !s.exclude.MatchString(it.Tag)) && (s.include == nil || s.include.MatchString(it.Tag))
 	})
-	s.UpdateOutbounds(s.lastOutOpts, outboundOpts)
+	s.UpdateProvider(s.lastOutOpts, outboundOpts, s.lastEPOpts, endpointOpts, updatedAt, info)
 	s.lastOutOpts = outboundOpts
-	s.UpdateEndpoints(s.lastEPOpts, endpointOpts)
 	s.lastEPOpts = endpointOpts
 	return nil
 }
