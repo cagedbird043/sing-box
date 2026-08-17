@@ -26,6 +26,7 @@ var (
 	prefixType             = reflect.TypeFor[badoption.Prefix]()
 	prefixableType         = reflect.TypeFor[badoption.Prefixable]()
 	httpHeaderType         = reflect.TypeFor[badoption.HTTPHeader]()
+	regexpType             = reflect.TypeFor[badoption.Regexp]()
 	memoryBytesType        = reflect.TypeFor[byteformats.MemoryBytes]()
 	networkBytesCompatType = reflect.TypeFor[byteformats.NetworkBytesCompat]()
 )
@@ -77,7 +78,7 @@ func (g *generator) Describe(valueType reflect.Type) (*Node, error) {
 		return g.Define("Duration", func() (*Node, error) {
 			return DurationNode(), nil
 		})
-	case addrType, prefixType, prefixableType:
+	case addrType, prefixType, prefixableType, regexpType:
 		return StringNode(), nil
 	case httpHeaderType:
 		return g.Define("HTTPHeader", func() (*Node, error) {
