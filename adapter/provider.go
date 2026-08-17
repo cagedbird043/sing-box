@@ -23,10 +23,18 @@ type Provider interface {
 
 var ErrProviderBusy = errors.New("provider is busy")
 
+type ProviderHealth struct {
+	Available bool
+	Delay     uint16
+	CheckedAt time.Time
+}
+
 type ProviderSnapshot struct {
+	Revision         uint64
 	Outbounds        []Outbound
 	UpdatedAt        time.Time
 	SubscriptionInfo *SubscriptionInfo
+	Health           map[string]ProviderHealth
 }
 
 type ProviderSnapshotter interface {
@@ -54,6 +62,11 @@ type ProviderManager interface {
 	Create(ctx context.Context, router Router, logFactory log.Factory, tag string, providerType string, options any) error
 }
 
+type ProviderManagerObservable interface {
+	RegisterProviderManagerCallback(callback ProviderManagerUpdateCallback) *list.Element[ProviderManagerUpdateCallback]
+	UnregisterProviderManagerCallback(element *list.Element[ProviderManagerUpdateCallback])
+}
+
 type SubscriptionInfo struct {
 	Upload   int64
 	Download int64
@@ -62,3 +75,4 @@ type SubscriptionInfo struct {
 }
 
 type ProviderUpdateCallback = func(tag string) error
+type ProviderManagerUpdateCallback = func()

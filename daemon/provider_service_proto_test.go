@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -40,6 +41,19 @@ func TestProviderServiceDescriptor(t *testing.T) {
 	assertFieldNumber(t, "Provider", "updated_at_ms", 3)
 	assertFieldNumber(t, "ProviderActionResult", "revision", 2)
 	assertFieldNumber(t, "ProviderHealthCheckResult", "results", 4)
+	forbiddenNames := []string{"url", "header", "token", "secret", "path", "cache", "config"}
+	messages := File_daemon_provider_service_proto.Messages()
+	for messageIndex := 0; messageIndex < messages.Len(); messageIndex++ {
+		fields := messages.Get(messageIndex).Fields()
+		for fieldIndex := 0; fieldIndex < fields.Len(); fieldIndex++ {
+			fieldName := strings.ToLower(string(fields.Get(fieldIndex).Name()))
+			for _, forbiddenName := range forbiddenNames {
+				if strings.Contains(fieldName, forbiddenName) {
+					t.Fatalf("sensitive field exposed in ProviderService schema: %s.%s", messages.Get(messageIndex).Name(), fieldName)
+				}
+			}
+		}
+	}
 
 	if APIVersion != 3 {
 		t.Fatalf("ProviderService must not change StartedService APIVersion: %d", APIVersion)

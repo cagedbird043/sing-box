@@ -28,10 +28,12 @@ type Adapter struct {
 	providerTag  string
 
 	stateAccess      sync.RWMutex
+	stateRevision    uint64
 	outbounds        []adapter.Outbound
 	outboundsByTag   map[string]adapter.Outbound
 	updatedAt        time.Time
 	subscriptionInfo *adapter.SubscriptionInfo
+	health           map[string]adapter.ProviderHealth
 
 	actionAccess sync.Mutex
 	tickerAccess sync.Mutex
@@ -120,12 +122,17 @@ func (a *Adapter) ProviderSnapshot() adapter.ProviderSnapshot {
 	a.stateAccess.RLock()
 	defer a.stateAccess.RUnlock()
 	snapshot := adapter.ProviderSnapshot{
+		Revision:  a.stateRevision,
 		Outbounds: append([]adapter.Outbound(nil), a.outbounds...),
 		UpdatedAt: a.updatedAt,
+		Health:    make(map[string]adapter.ProviderHealth, len(a.health)),
 	}
 	if a.subscriptionInfo != nil {
 		subscriptionInfo := *a.subscriptionInfo
 		snapshot.SubscriptionInfo = &subscriptionInfo
+	}
+	for tag, health := range a.health {
+		snapshot.Health[tag] = health
 	}
 	return snapshot
 }
@@ -231,9 +238,17 @@ func (a *Adapter) UpdateProvider(oldOutbounds []option.Outbound, newOutbounds []
 	}
 
 	a.stateAccess.Lock()
+	health := make(map[string]adapter.ProviderHealth, len(outbounds))
+	for _, outbound := range outbounds {
+		if item, exists := a.health[outbound.Tag()]; exists {
+			health[outbound.Tag()] = item
+		}
+	}
+	a.stateRevision++
 	a.outbounds = outbounds
 	a.outboundsByTag = outboundsByTag
 	a.updatedAt = updatedAt
+	a.health = health
 	if subscriptionInfo == nil {
 		a.subscriptionInfo = nil
 	} else {
@@ -245,6 +260,7 @@ func (a *Adapter) UpdateProvider(oldOutbounds []option.Outbound, newOutbounds []
 
 func (a *Adapter) UpdateMetadata(updatedAt time.Time, subscriptionInfo *adapter.SubscriptionInfo) {
 	a.stateAccess.Lock()
+	a.stateRevision++
 	a.updatedAt = updatedAt
 	if subscriptionInfo == nil {
 		a.subscriptionInfo = nil
@@ -286,6 +302,7 @@ func (a *Adapter) HealthCheck(ctx context.Context) (map[string]uint16, error) {
 	}
 	a.tickerAccess.Unlock()
 	result := make(map[string]uint16)
+	health := make(map[string]adapter.ProviderHealth)
 	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](10))
 	var resultAccess sync.Mutex
 	checked := make(map[string]bool)
@@ -299,20 +316,31 @@ func (a *Adapter) HealthCheck(ctx context.Context) (map[string]uint16, error) {
 			checkContext, cancel := context.WithTimeout(ctx, a.timeout)
 			defer cancel()
 			delay, err := urltest.URLTest(checkContext, a.link, detour)
+			checkedAt := time.Now()
+			item := adapter.ProviderHealth{CheckedAt: checkedAt}
 			if err != nil {
 				a.logger.Debug("outbound ", tag, " unavailable: ", err)
 				a.history.DeleteURLTestHistory(tag)
 			} else {
 				a.logger.Debug("outbound ", tag, " available: ", delay, "ms")
-				a.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{Time: time.Now(), Delay: delay})
-				resultAccess.Lock()
-				result[tag] = delay
-				resultAccess.Unlock()
+				a.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{Time: checkedAt, Delay: delay})
+				item.Available = true
+				item.Delay = delay
 			}
+			resultAccess.Lock()
+			health[tag] = item
+			if item.Available {
+				result[tag] = delay
+			}
+			resultAccess.Unlock()
 			return nil, nil
 		})
 	}
 	b.Wait()
+	a.stateAccess.Lock()
+	a.stateRevision++
+	a.health = health
+	a.stateAccess.Unlock()
 	a.UpdateGroups()
 	return result, nil
 }

@@ -13,18 +13,20 @@ import (
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
+	"github.com/sagernet/sing/common/x/list"
 )
 
 var _ adapter.ProviderManager = (*Manager)(nil)
 
 type Manager struct {
-	logger        log.ContextLogger
-	registry      adapter.ProviderRegistry
-	access        sync.RWMutex
-	started       bool
-	stage         adapter.StartStage
-	providers     []adapter.Provider
-	providerByTag map[string]adapter.Provider
+	logger          log.ContextLogger
+	registry        adapter.ProviderRegistry
+	access          sync.RWMutex
+	started         bool
+	stage           adapter.StartStage
+	providers       []adapter.Provider
+	providerByTag   map[string]adapter.Provider
+	updateCallbacks list.List[adapter.ProviderManagerUpdateCallback]
 }
 
 func NewManager(logger logger.ContextLogger, registry adapter.ProviderRegistry) *Manager {
@@ -84,6 +86,7 @@ func (m *Manager) Close() error {
 			monitor.Finish()
 		}
 	}
+	m.notifyProviderManagerCallbacks()
 	return err
 }
 
@@ -117,10 +120,12 @@ func (m *Manager) Remove(tag string) error {
 	m.providers = append(m.providers[:index], m.providers[index+1:]...)
 	started := m.started
 	m.access.Unlock()
+	var err error
 	if started {
-		return common.Close(provider)
+		err = common.Close(provider)
 	}
-	return nil
+	m.notifyProviderManagerCallbacks()
+	return err
 }
 
 func (m *Manager) Create(ctx context.Context, router adapter.Router, logFactory log.Factory, tag string, providerType string, options any) error {
@@ -133,7 +138,13 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logFactory 
 		return err
 	}
 	m.access.Lock()
-	defer m.access.Unlock()
+	changed := false
+	defer func() {
+		m.access.Unlock()
+		if changed {
+			m.notifyProviderManagerCallbacks()
+		}
+	}()
 	if m.started {
 		if m.stage >= adapter.StartStateStart {
 			if contextStarter, ok := provider.(interface {
@@ -165,5 +176,33 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logFactory 
 	}
 	m.providers = append(m.providers, provider)
 	m.providerByTag[tag] = provider
+	changed = true
 	return nil
+}
+
+func (m *Manager) RegisterProviderManagerCallback(callback adapter.ProviderManagerUpdateCallback) *list.Element[adapter.ProviderManagerUpdateCallback] {
+	m.access.Lock()
+	defer m.access.Unlock()
+	return m.updateCallbacks.PushBack(callback)
+}
+
+func (m *Manager) UnregisterProviderManagerCallback(element *list.Element[adapter.ProviderManagerUpdateCallback]) {
+	if element == nil {
+		return
+	}
+	m.access.Lock()
+	defer m.access.Unlock()
+	m.updateCallbacks.Remove(element)
+}
+
+func (m *Manager) notifyProviderManagerCallbacks() {
+	m.access.RLock()
+	callbacks := make([]adapter.ProviderManagerUpdateCallback, 0)
+	for element := m.updateCallbacks.Front(); element != nil; element = element.Next() {
+		callbacks = append(callbacks, element.Value)
+	}
+	m.access.RUnlock()
+	for _, callback := range callbacks {
+		callback()
+	}
 }

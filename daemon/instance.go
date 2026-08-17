@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"sync"
 
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
@@ -16,8 +17,12 @@ import (
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/common/observable"
+	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
+
+	"github.com/gofrs/uuid/v5"
 )
 
 type Instance struct {
@@ -32,7 +37,21 @@ type Instance struct {
 	urlTestHistoryStorage *urltest.HistoryStorage
 	outboundManager       adapter.OutboundManager
 	endpointManager       adapter.EndpointManager
+	providerManager       adapter.ProviderManager
 	logFactory            log.Factory
+
+	providerInstanceID       string
+	providerStateAccess      sync.Mutex
+	providerStateInitialized bool
+	providerRevision         uint64
+	providerStateRevisions   map[string]uint64
+	providerUpdateSubscriber *observable.Subscriber[struct{}]
+	providerUpdateObserver   *observable.Observer[struct{}]
+	providerCallbackAccess   sync.Mutex
+	providerServiceClosed    bool
+	providerCallbacks        map[adapter.Provider]*list.Element[adapter.ProviderUpdateCallback]
+	providerManagerObserver  adapter.ProviderManagerObservable
+	providerManagerCallback  *list.Element[adapter.ProviderManagerUpdateCallback]
 }
 
 func (s *StartedService) CheckConfig(ctx context.Context, configContent string) error {
@@ -136,13 +155,15 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 	i.cacheFile = service.FromContext[adapter.CacheFile](ctx)
 	i.outboundManager = service.FromContext[adapter.OutboundManager](ctx)
 	i.endpointManager = service.FromContext[adapter.EndpointManager](ctx)
+	i.providerManager = service.FromContext[adapter.ProviderManager](ctx)
 	i.logFactory = boxInstance.LogFactory()
+	i.initializeProviderService()
 	log.SetStdLogger(boxInstance.LogFactory().Logger())
 	return i, nil
 }
 
 func attachInstance(ctx context.Context) *Instance {
-	return &Instance{
+	instance := &Instance{
 		ctx:                   ctx,
 		connectionManager:     service.FromContext[adapter.ConnectionManager](ctx),
 		clashServer:           service.FromContext[adapter.ClashServer](ctx),
@@ -152,8 +173,11 @@ func attachInstance(ctx context.Context) *Instance {
 		urlTestHistoryStorage: service.PtrFromContext[urltest.HistoryStorage](ctx),
 		outboundManager:       service.FromContext[adapter.OutboundManager](ctx),
 		endpointManager:       service.FromContext[adapter.EndpointManager](ctx),
+		providerManager:       service.FromContext[adapter.ProviderManager](ctx),
 		logFactory:            service.FromContext[log.Factory](ctx),
 	}
+	instance.initializeProviderService()
+	return instance
 }
 
 func (i *Instance) Start() error {
@@ -161,9 +185,113 @@ func (i *Instance) Start() error {
 }
 
 func (i *Instance) Close() error {
+	i.closeProviderService()
 	i.cancel()
 	i.urlTestHistoryStorage.Close()
 	return i.instance.Close()
+}
+
+func (i *Instance) initializeProviderService() {
+	i.providerInstanceID = uuid.Must(uuid.NewV4()).String()
+	i.providerRevision = 1
+	i.providerStateRevisions = make(map[string]uint64)
+	i.providerUpdateSubscriber = observable.NewSubscriber[struct{}](1)
+	i.providerUpdateObserver = observable.NewObserver(i.providerUpdateSubscriber, 1)
+	i.providerCallbacks = make(map[adapter.Provider]*list.Element[adapter.ProviderUpdateCallback])
+	if i.providerManager == nil {
+		return
+	}
+	if managerObserver, isObservable := i.providerManager.(adapter.ProviderManagerObservable); isObservable {
+		i.providerManagerObserver = managerObserver
+		i.providerManagerCallback = managerObserver.RegisterProviderManagerCallback(func() {
+			i.syncProviderCallbacks()
+			i.emitProviderUpdate()
+		})
+	}
+	i.syncProviderCallbacks()
+}
+
+func (i *Instance) syncProviderCallbacks() {
+	i.providerCallbackAccess.Lock()
+	defer i.providerCallbackAccess.Unlock()
+	if i.providerServiceClosed {
+		return
+	}
+	currentProviders := make(map[adapter.Provider]bool)
+	for _, provider := range i.providerManager.Providers() {
+		currentProviders[provider] = true
+		if _, exists := i.providerCallbacks[provider]; exists {
+			continue
+		}
+		element := provider.RegisterCallback(func(string) error {
+			i.emitProviderUpdate()
+			return nil
+		})
+		if element != nil {
+			i.providerCallbacks[provider] = element
+		}
+	}
+	for provider, element := range i.providerCallbacks {
+		if currentProviders[provider] {
+			continue
+		}
+		provider.UnregisterCallback(element)
+		delete(i.providerCallbacks, provider)
+	}
+}
+
+func (i *Instance) emitProviderUpdate() {
+	i.providerCallbackAccess.Lock()
+	closed := i.providerServiceClosed
+	i.providerCallbackAccess.Unlock()
+	if !closed {
+		i.providerUpdateSubscriber.Emit(struct{}{})
+	}
+}
+
+func (i *Instance) closeProviderService() {
+	i.providerCallbackAccess.Lock()
+	i.providerServiceClosed = true
+	i.providerCallbackAccess.Unlock()
+	if i.providerManagerObserver != nil {
+		i.providerManagerObserver.UnregisterProviderManagerCallback(i.providerManagerCallback)
+		i.providerManagerObserver = nil
+		i.providerManagerCallback = nil
+	}
+	i.providerCallbackAccess.Lock()
+	for provider, element := range i.providerCallbacks {
+		provider.UnregisterCallback(element)
+	}
+	clear(i.providerCallbacks)
+	i.providerCallbackAccess.Unlock()
+	if i.providerUpdateSubscriber != nil {
+		i.providerUpdateSubscriber.Close()
+	}
+}
+
+func (i *Instance) providerStateRevision(revisions map[string]uint64) uint64 {
+	i.providerStateAccess.Lock()
+	defer i.providerStateAccess.Unlock()
+	changed := !i.providerStateInitialized || len(revisions) != len(i.providerStateRevisions)
+	if !changed {
+		for tag, revision := range revisions {
+			if i.providerStateRevisions[tag] != revision {
+				changed = true
+				break
+			}
+		}
+	}
+	if changed {
+		if i.providerStateInitialized {
+			i.providerRevision++
+		}
+		i.providerStateInitialized = true
+		i.providerStateRevisions = make(map[string]uint64, len(revisions))
+		for tag, revision := range revisions {
+			i.providerStateRevisions[tag] = revision
+		}
+	}
+	return i.providerRevision
 }
 
 func (i *Instance) Box() *box.Box {
