@@ -20,6 +20,7 @@ type pendingWrites struct {
 	fakeIPAddress4 map[string]netip.Addr
 	fakeIPAddress6 map[string]netip.Addr
 	fakeIPMetadata *adapter.FakeIPMetadata
+	subscriptions  map[string][]byte
 	count          int
 	size           int
 }
@@ -31,6 +32,7 @@ func newPendingWrites() *pendingWrites {
 		fakeIPDomain:   make(map[netip.Addr]string),
 		fakeIPAddress4: make(map[string]netip.Addr),
 		fakeIPAddress6: make(map[string]netip.Addr),
+		subscriptions:  make(map[string][]byte),
 	}
 }
 
@@ -86,6 +88,17 @@ func (c *CacheFile) Flush() {
 }
 
 func (c *CacheFile) writePending(tx *bbolt.Tx, pending *pendingWrites) error {
+	if len(pending.subscriptions) > 0 {
+		bucket, err := c.createBucket(tx, bucketSubscription)
+		if err != nil {
+			return err
+		}
+		for tag, value := range pending.subscriptions {
+			if err := bucket.Put([]byte(tag), value); err != nil {
+				return err
+			}
+		}
+	}
 	if len(pending.dnsCache) > 0 {
 		bucket, err := c.createBucket(tx, bucketDNSCache)
 		if err != nil {

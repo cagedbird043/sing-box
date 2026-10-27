@@ -10,11 +10,16 @@
     "proxy-b",
     "proxy-c"
   ],
+  "providers": ["subscription"],
+  "use_all_providers": false,
+  "include": "",
+  "exclude": "",
   "url": "",
   "interval": "",
   "tolerance": 0,
   "idle_timeout": "",
-  "interrupt_exist_connections": false
+  "interrupt_exist_connections": false,
+  "fallback": {"enabled": false, "max_delay": "1s"}
 }
 ```
 
@@ -22,9 +27,18 @@
 
 #### outbounds
 
-==Required==
+At least one outbound or provider is required.
 
 List of outbound tags to test.
+
+#### providers / use_all_providers / include / exclude
+
+See [selector provider membership](/configuration/outbound/selector/#providers). Membership updates on provider refresh; empty groups use direct `Compatible`.
+
+#### fallback
+
+When `enabled`, prefer the first available member within `max_delay`. If every available member exceeds the limit, choose the fastest. An empty or zero limit accepts any delay.
+
 
 #### url
 

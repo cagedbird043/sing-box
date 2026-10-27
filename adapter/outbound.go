@@ -50,6 +50,12 @@ type OutboundManager interface {
 	Create(ctx context.Context, router Router, logger log.ContextLogger, tag string, outboundType string, options any) error
 }
 
+// ProviderOutboundManager publishes nodes whose scopes are owned by providers.
+type ProviderOutboundManager interface {
+	OutboundManager
+	PublishProvider(namespace string, nodes []Outbound) error
+}
+
 type IdleConnectionKeeper interface {
 	SetKeepIdleConnections(keep bool)
 	CloseIdleConnections()

@@ -164,7 +164,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 		conn = tracker.RoutedConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
 	}
 	ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
-	onClose = registerInterrupt(chain, conn, onClose)
+	onClose = registerInterrupt(ctx, chain, conn, onClose)
 	outbound := chain[len(chain)-1]
 	if outboundHandler, isHandler := outbound.(adapter.ConnectionHandler); isHandler {
 		outboundHandler.NewConnection(ctx, conn, metadata, onClose)
@@ -193,7 +193,10 @@ func resolveOutbound(outbound adapter.Outbound, network string) ([]adapter.Outbo
 	return chain, nil
 }
 
-func registerInterrupt(chain []adapter.Outbound, closer io.Closer, onClose N.CloseHandlerFunc) N.CloseHandlerFunc {
+func registerInterrupt(ctx context.Context, chain []adapter.Outbound, closer io.Closer, onClose N.CloseHandlerFunc) N.CloseHandlerFunc {
+	if interrupt.IsProviderConnectionFromContext(ctx) {
+		return onClose
+	}
 	var removers []func()
 	for _, outbound := range chain {
 		group, isGroup := outbound.(adapter.OutboundGroup)
@@ -333,7 +336,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 		conn = newFakeIPNATPacketConn(bufio.NewNetPacketConn(conn), metadata.OriginDestination, metadata.Destination)
 	}
 	ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
-	onClose = registerInterrupt(chain, conn, onClose)
+	onClose = registerInterrupt(ctx, chain, conn, onClose)
 	outbound := chain[len(chain)-1]
 	if outboundHandler, isHandler := outbound.(adapter.PacketConnectionHandler); isHandler {
 		outboundHandler.NewPacketConnection(ctx, conn, metadata, onClose)
