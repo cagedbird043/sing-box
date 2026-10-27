@@ -10,6 +10,8 @@ INSTALL_BIN_PATH="/usr/local/bin"
 INSTALL_CONFIG_PATH="/usr/local/etc/sing-box"
 INSTALL_DATA_PATH="/var/lib/sing-box"
 SYSTEMD_SERVICE_PATH="/etc/systemd/system"
+NM_DISPATCHER_PATH="/etc/NetworkManager/dispatcher.d"
+NM_DISPATCHER_HOOK_NAME="90-sing-box-recover"
 
 DEFAULT_BUILD_TAGS="$(cat "$PROJECT_DIR/release/DEFAULT_BUILD_TAGS_OTHERS")"
 
@@ -81,6 +83,12 @@ setup_config() {
 setup_systemd() {
     echo "Setting up systemd service"
     sudo cp "$SCRIPT_DIR/sing-box.service" "$SYSTEMD_SERVICE_PATH/"
+    if [ -d "$NM_DISPATCHER_PATH" ]; then
+        echo "Setting up NetworkManager recovery hook"
+        sudo install -Dm755 "$PROJECT_DIR/release/config/sing-box-network-recover" "$NM_DISPATCHER_PATH/$NM_DISPATCHER_HOOK_NAME"
+    else
+        echo "NetworkManager dispatcher directory not found, skipping recovery hook"
+    fi
     sudo systemctl daemon-reload
 }
 

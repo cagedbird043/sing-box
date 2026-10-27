@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+iface="${1:-}"
+action="${2:-}"
+
+case "$action" in
+  connectivity-change)
+    [ "${CONNECTIVITY_STATE:-}" = "FULL" ] || exit 0
+    ;;
+  up|dhcp4-change|dhcp6-change)
+    case "$iface" in
+      ""|lo|tun*|tap*|tailscale*|wg*|docker*|veth*|virbr*|br-*)
+        exit 0
+        ;;
+    esac
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+if /usr/bin/systemctl is-enabled --quiet sing-box.service; then
+  /usr/bin/systemctl start sing-box.service
+fi
+
+/usr/bin/systemctl list-unit-files --type=service --state=enabled,enabled-runtime,linked,linked-runtime --no-legend 'sing-box@*.service' 2>/dev/null |
+while IFS= read -r line; do
+  unit=${line%% *}
+  [ -n "$unit" ] || continue
+  /usr/bin/systemctl start "$unit"
+done
