@@ -3,10 +3,12 @@ set -euo pipefail
 
 git diff --check
 
-go test ./adapter/provider ./provider/parser ./provider/remote ./provider/local ./protocol/group ./option
+ldflags="$(< release/LDFLAGS)"
+
+go test -ldflags "${ldflags}" ./provider/... ./adapter/... ./protocol/group/... ./daemon/... ./service/api ./experimental/cachefile ./option ./schema ./route ./common/interrupt
 
 go list ./... \
-  | grep -Ev '^github.com/sagernet/sing-box/(common/netns|experimental/(boxdd|libbox))$' \
-  | xargs -r go test
+  | grep -Ev '^github.com/sagernet/sing-box/common/netns$' \
+  | xargs -r go test -ldflags "${ldflags}"
 
 scripts/ci/check-provider-sample.sh
