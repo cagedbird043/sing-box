@@ -33,14 +33,20 @@ func (g *Group) Add(closer io.Closer, isExternal bool) (remove func()) {
 	}
 }
 
-func (g *Group) NewConn(conn net.Conn, isExternal bool) net.Conn {
+func (g *Group) NewConn(conn net.Conn, isExternal bool, isProvider bool) net.Conn {
+	if isProvider {
+		return conn
+	}
 	g.access.Lock()
 	defer g.access.Unlock()
 	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
 	return &Conn{Conn: conn, group: g, element: item}
 }
 
-func (g *Group) NewPacketConn(conn net.PacketConn, isExternal bool) net.PacketConn {
+func (g *Group) NewPacketConn(conn net.PacketConn, isExternal bool, isProvider bool) net.PacketConn {
+	if isProvider {
+		return conn
+	}
 	g.access.Lock()
 	defer g.access.Unlock()
 	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
