@@ -1,0 +1,292 @@
+name: Cagedbird Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string for release tag/assets; use auto unless overriding."
+        required: false
+        default: auto
+        type: string
+  # Release only via manual workflow_dispatch — not on every push.
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.version || 'auto' }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Resolve cagedbird version
+        id: version
+        shell: bash
+        run: |
+          version="$(scripts/ci/resolve-cagedbird-version.sh)"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved version: ${version}"
+        env:
+          CAGEDBIRD_VERSION: ${{ github.event.inputs.version || 'auto' }}
+
+  provider-core:
+    name: Provider core checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Check provider patch
+        run: scripts/ci/test-provider-core.sh
+
+  build-binaries:
+    name: ${{ matrix.artifact_id }}
+    needs:
+      - version
+      - provider-core
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_id: sing-box-cagedbird-linux-amd64
+            target_os: linux
+            target_arch: amd64
+            goamd64: v1
+            android_ndk_triple: ""
+          - artifact_id: sing-box-cagedbird-linux-amd64-v4
+            target_os: linux
+            target_arch: amd64
+            goamd64: v4
+            android_ndk_triple: ""
+          - artifact_id: sing-box-cagedbird-linux-arm64
+            target_os: linux
+            target_arch: arm64
+            goamd64: ""
+            android_ndk_triple: ""
+          - artifact_id: sing-box-cagedbird-android-arm64
+            target_os: android
+            target_arch: arm64
+            goamd64: ""
+            android_ndk_triple: aarch64-linux-android23
+          - artifact_id: sing-box-cagedbird-android-amd64
+            target_os: android
+            target_arch: amd64
+            goamd64: ""
+            android_ndk_triple: x86_64-linux-android23
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Setup Android NDK
+        if: matrix.target_os == 'android'
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+          local-cache: false
+      - name: Build binary
+        run: scripts/ci/build-binary.sh
+        env:
+          CAGEDBIRD_VERSION: ${{ needs.version.outputs.version }}
+          TARGET_OS: ${{ matrix.target_os }}
+          TARGET_ARCH: ${{ matrix.target_arch }}
+          TARGET_GOAMD64: ${{ matrix.goamd64 }}
+          ANDROID_NDK_TRIPLE: ${{ matrix.android_ndk_triple }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ARTIFACT_ID: ${{ matrix.artifact_id }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_id }}
+          path: dist/cagedbird-binaries/${{ matrix.artifact_id }}.tar.gz
+          if-no-files-found: error
+
+  build-darwin:
+    name: sing-box-cagedbird-darwin-arm64
+    needs:
+      - version
+      - provider-core
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Build Darwin arm64 binary
+        run: scripts/ci/build-binary.sh
+        env:
+          CAGEDBIRD_VERSION: ${{ needs.version.outputs.version }}
+          TARGET_OS: darwin
+          TARGET_ARCH: arm64
+          CGO_ENABLED: "1"
+          ARTIFACT_ID: sing-box-cagedbird-darwin-arm64
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-cagedbird-darwin-arm64
+          path: dist/cagedbird-binaries/sing-box-cagedbird-darwin-arm64.tar.gz
+          if-no-files-found: error
+
+  build-android-apk:
+    name: Android APK and AAR
+    needs:
+      - version
+      - provider-core
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+          cache: false
+      - name: Go and gomobile cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/pkg/gomobile
+            ~/go/bin/gomobile
+            ~/go/bin/gobind
+          key: android-go-gomobile-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile', 'cmd/internal/build_libbox/**') }}-r28-v0.1.12
+          restore-keys: |
+            android-go-gomobile-${{ runner.os }}-
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+          local-cache: false
+      - name: Setup OpenJDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle
+          key: gradle-${{ runner.os }}-${{ hashFiles('clients/android/**/*.gradle*', 'clients/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+      - name: Build Android APKs
+        run: scripts/ci/build-android-apks.sh
+        env:
+          CAGEDBIRD_VERSION: ${{ needs.version.outputs.version }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+          CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64 }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-cagedbird-android-apk
+          path: dist/cagedbird-android
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - version
+      - build-binaries
+      - build-darwin
+      - build-android-apk
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/downloaded
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_dir="dist/release"
+          rm -rf "${release_dir}"
+          mkdir -p "${release_dir}"
+
+          while IFS= read -r -d '' file; do
+            name="$(basename "${file}")"
+            if [[ "${name}" == "BUILD-INFO.txt" ]]; then
+              parent="$(basename "$(dirname "${file}")")"
+              name="${parent}-BUILD-INFO.txt"
+            fi
+            cp -f "${file}" "${release_dir}/${name}"
+          done < <(find dist/downloaded -type f \
+            \( -name '*.tar.gz' -o -name '*.apk' -o -name '*.aar' -o -name 'SFA-version.properties' -o -name 'BUILD-INFO.txt' \) \
+            -print0)
+
+          echo "Release assets:"
+          find "${release_dir}" -maxdepth 1 -type f -printf '%f\n' | sort
+          test -n "$(find "${release_dir}" -maxdepth 1 -type f -print -quit)"
+      - name: Publish release
+        run: scripts/ci/publish-cagedbird-release.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_DIST: dist/release
+          RELEASE_PRERELEASE: "true"
+          RELEASE_DRAFT: "false"
+          RELEASE_LATEST: "false"
+
+  publish-distribution:
+    name: Publish Homebrew tap
+    needs:
+      - version
+      - publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Check distribution SSH secret
+        id: distribution-secret
+        shell: bash
+        env:
+          CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY: ${{ secrets.CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY}" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY is not configured; skipping Homebrew publishing."
+          fi
+      - name: Publish Homebrew metadata
+        if: steps.distribution-secret.outputs.enabled == 'true'
+        run: scripts/ci/publish-cagedbird-distribution.sh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY: ${{ secrets.CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY }}

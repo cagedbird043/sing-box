@@ -1,0 +1,109 @@
+name: Cagedbird Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string for artifacts and sing-box --version; use auto unless overriding."
+        required: false
+        default: auto
+        type: string
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.version || 'auto' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.artifact_id }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_id: sing-box-cagedbird-linux-amd64
+            target_os: linux
+            target_arch: amd64
+            goamd64: v1
+            android_ndk_triple: ""
+          - artifact_id: sing-box-cagedbird-linux-amd64-v4
+            target_os: linux
+            target_arch: amd64
+            goamd64: v4
+            android_ndk_triple: ""
+          - artifact_id: sing-box-cagedbird-linux-arm64
+            target_os: linux
+            target_arch: arm64
+            goamd64: ""
+            android_ndk_triple: ""
+          - artifact_id: sing-box-cagedbird-android-arm64
+            target_os: android
+            target_arch: arm64
+            goamd64: ""
+            android_ndk_triple: aarch64-linux-android23
+          - artifact_id: sing-box-cagedbird-android-amd64
+            target_os: android
+            target_arch: amd64
+            goamd64: ""
+            android_ndk_triple: x86_64-linux-android23
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Setup Android NDK
+        if: matrix.target_os == 'android'
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+          local-cache: false
+      - name: Build binary
+        run: scripts/ci/build-binary.sh
+        env:
+          CAGEDBIRD_VERSION: ${{ github.event.inputs.version || 'auto' }}
+          TARGET_OS: ${{ matrix.target_os }}
+          TARGET_ARCH: ${{ matrix.target_arch }}
+          TARGET_GOAMD64: ${{ matrix.goamd64 }}
+          ANDROID_NDK_TRIPLE: ${{ matrix.android_ndk_triple }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ARTIFACT_ID: ${{ matrix.artifact_id }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_id }}
+          path: dist/cagedbird-binaries/${{ matrix.artifact_id }}.tar.gz
+          if-no-files-found: error
+
+  build-darwin:
+    name: sing-box-cagedbird-darwin-arm64
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Build Darwin arm64 binary
+        run: scripts/ci/build-binary.sh
+        env:
+          CAGEDBIRD_VERSION: ${{ github.event.inputs.version || 'auto' }}
+          TARGET_OS: darwin
+          TARGET_ARCH: arm64
+          CGO_ENABLED: "1"
+          ARTIFACT_ID: sing-box-cagedbird-darwin-arm64
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-cagedbird-darwin-arm64
+          path: dist/cagedbird-binaries/sing-box-cagedbird-darwin-arm64.tar.gz
+          if-no-files-found: error
