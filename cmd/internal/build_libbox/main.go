@@ -77,20 +77,6 @@ type AndroidBuildConfig struct {
 	Tags       []string
 }
 
-func filterTags(tags []string, exclude ...string) []string {
-	excludeMap := make(map[string]bool)
-	for _, tag := range exclude {
-		excludeMap[tag] = true
-	}
-	var result []string
-	for _, tag := range tags {
-		if !excludeMap[tag] {
-			result = append(result, tag)
-		}
-	}
-	return result
-}
-
 func checkJavaVersion() {
 	var javaPath string
 	javaHome := os.Getenv("JAVA_HOME")
@@ -173,18 +159,6 @@ func buildAndroid() {
 		AndroidAPI: 24,
 		OutputName: "libbox.aar",
 		Tags:       mainTags,
-	}, bindTarget)
-
-	// Build legacy variant (SDK 21, no naive outbound)
-	legacyTags := filterTags(sharedTags, "with_naive_outbound")
-	// legacyTags = append(legacyTags, memcTags...)
-	if debugEnabled {
-		legacyTags = append(legacyTags, debugTags...)
-	}
-	buildAndroidVariant(AndroidBuildConfig{
-		AndroidAPI: 21,
-		OutputName: "libbox-legacy.aar",
-		Tags:       legacyTags,
 	}, bindTarget)
 }
 
