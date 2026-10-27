@@ -1,0 +1,40 @@
+name: Cagedbird Binaries
+
+on:
+  push:
+    branches:
+      - cagedbird/candidate-*
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'release/LDFLAGS'
+      - 'release/DEFAULT_BUILD_TAGS_*'
+      - 'scripts/ci/build-binary.sh'
+      - 'scripts/ci/resolve-cagedbird-version.sh'
+      - '.github/workflows/cagedbird-binaries.yml'
+      - '.github/workflows/cagedbird-build.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string for artifacts and sing-box --version; use auto unless overriding."
+        required: false
+        default: auto
+        type: string
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.version || 'auto' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/cagedbird-build.yml
+    with:
+      version: ${{ inputs.version || 'auto' }}
+      artifacts: >-
+        ["sing-box-cagedbird-linux-amd64", "sing-box-cagedbird-linux-amd64-v4",
+        "sing-box-cagedbird-linux-arm64", "sing-box-cagedbird-android-arm64",
+        "sing-box-cagedbird-android-amd64", "sing-box-cagedbird-darwin-arm64"]

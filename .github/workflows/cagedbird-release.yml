@@ -1,0 +1,206 @@
+name: Cagedbird Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version string for release tag/assets; use auto unless overriding."
+        required: false
+        default: auto
+        type: string
+  # Release only via manual workflow_dispatch — not on every push.
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.version || 'auto' }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Resolve cagedbird version
+        id: version
+        shell: bash
+        run: |
+          version="$(scripts/ci/resolve-cagedbird-version.sh)"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved version: ${version}"
+        env:
+          CAGEDBIRD_VERSION: ${{ github.event.inputs.version || 'auto' }}
+
+  plan:
+    name: Plan artifacts
+    needs: version
+    runs-on: ubuntu-latest
+    outputs:
+      reuse: ${{ steps.plan.outputs.reuse }}
+      build: ${{ steps.plan.outputs.build }}
+      provider_core: ${{ steps.plan.outputs.provider_core }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - name: Find reusable artifacts for this commit
+        id: plan
+        run: scripts/ci/plan-cagedbird-artifacts.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+
+  provider-core:
+    name: Provider core checks
+    needs: plan
+    if: needs.plan.outputs.provider_core == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Check provider patch
+        run: scripts/ci/test-provider-core.sh
+
+  build:
+    name: Build
+    needs:
+      - version
+      - plan
+      - provider-core
+    if: >-
+      !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.build != '[]' &&
+      (needs.provider-core.result == 'success' || needs.provider-core.result == 'skipped')
+    uses: ./.github/workflows/cagedbird-build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      artifacts: ${{ needs.plan.outputs.build }}
+    secrets: inherit
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - version
+      - plan
+      - provider-core
+      - build
+    if: >-
+      !cancelled() && needs.plan.result == 'success' &&
+      (needs.provider-core.result == 'success' || needs.provider-core.result == 'skipped') &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Download artifacts built in this run
+        if: needs.build.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/downloaded
+      - name: Download reused artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE: ${{ needs.plan.outputs.reuse }}
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r artifact run_id; do
+            [[ -n "${artifact}" ]] || continue
+            echo "Reusing ${artifact} from run ${run_id}"
+            gh run download "${run_id}" -R "${GITHUB_REPOSITORY}" -n "${artifact}" -D "dist/downloaded/${artifact}"
+          done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' <<<"${REUSE}")
+      - name: Verify artifacts
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for artifact in \
+            sing-box-cagedbird-linux-amd64 \
+            sing-box-cagedbird-linux-amd64-v4 \
+            sing-box-cagedbird-linux-arm64 \
+            sing-box-cagedbird-android-arm64 \
+            sing-box-cagedbird-android-amd64 \
+            sing-box-cagedbird-darwin-arm64 \
+            sing-box-cagedbird-android-apk; do
+            scripts/ci/verify-cagedbird-artifact.sh "${artifact}" "dist/downloaded/${artifact}" "${GITHUB_SHA}" "${RELEASE_VERSION}"
+          done
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_dir="dist/release"
+          rm -rf "${release_dir}"
+          mkdir -p "${release_dir}"
+
+          while IFS= read -r -d '' file; do
+            name="$(basename "${file}")"
+            if [[ "${name}" == "BUILD-INFO.txt" ]]; then
+              parent="$(basename "$(dirname "${file}")")"
+              name="${parent}-BUILD-INFO.txt"
+            fi
+            cp -f "${file}" "${release_dir}/${name}"
+          done < <(find dist/downloaded -type f \
+            \( -name '*.tar.gz' -o -name '*.apk' -o -name '*.aar' -o -name 'SFA-version.properties' -o -name 'BUILD-INFO.txt' \) \
+            -print0)
+
+          echo "Release assets:"
+          find "${release_dir}" -maxdepth 1 -type f -printf '%f\n' | sort
+          test -n "$(find "${release_dir}" -maxdepth 1 -type f -print -quit)"
+      - name: Publish release
+        run: scripts/ci/publish-cagedbird-release.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_DIST: dist/release
+          RELEASE_PRERELEASE: "true"
+          RELEASE_DRAFT: "false"
+          RELEASE_LATEST: "false"
+
+  publish-distribution:
+    name: Publish Homebrew tap
+    needs:
+      - version
+      - publish
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Check distribution SSH secret
+        id: distribution-secret
+        shell: bash
+        env:
+          CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY: ${{ secrets.CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -n "${CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY}" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "enabled=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY is not configured; skipping Homebrew publishing."
+          fi
+      - name: Publish Homebrew metadata
+        if: steps.distribution-secret.outputs.enabled == 'true'
+        run: scripts/ci/publish-cagedbird-distribution.sh
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY: ${{ secrets.CAGEDBIRD_DISTRIBUTION_SSH_PRIVATE_KEY }}
