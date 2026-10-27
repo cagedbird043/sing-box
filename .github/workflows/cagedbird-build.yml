@@ -1,0 +1,186 @@
+name: Cagedbird Build
+
+# The single definition of how cagedbird artifacts are built. Binaries, Android APK
+# and Release all call this, so a reused candidate artifact and a fresh release build
+# come from the same recipe.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version string, or auto to derive it from the commit."
+        required: false
+        default: auto
+        type: string
+      artifacts:
+        description: "JSON array of artifact ids to build."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select targets
+    runs-on: ubuntu-latest
+    outputs:
+      binaries: ${{ steps.select.outputs.binaries }}
+      darwin: ${{ steps.select.outputs.darwin }}
+      apk: ${{ steps.select.outputs.apk }}
+    steps:
+      - name: Select targets
+        id: select
+        shell: bash
+        env:
+          ARTIFACTS: ${{ inputs.artifacts }}
+        run: |
+          set -euo pipefail
+          targets='[
+            {"artifact_id":"sing-box-cagedbird-linux-amd64","target_os":"linux","target_arch":"amd64","goamd64":"v1","android_ndk_triple":""},
+            {"artifact_id":"sing-box-cagedbird-linux-amd64-v4","target_os":"linux","target_arch":"amd64","goamd64":"v4","android_ndk_triple":""},
+            {"artifact_id":"sing-box-cagedbird-linux-arm64","target_os":"linux","target_arch":"arm64","goamd64":"","android_ndk_triple":""},
+            {"artifact_id":"sing-box-cagedbird-android-arm64","target_os":"android","target_arch":"arm64","goamd64":"","android_ndk_triple":"aarch64-linux-android23"},
+            {"artifact_id":"sing-box-cagedbird-android-amd64","target_os":"android","target_arch":"amd64","goamd64":"","android_ndk_triple":"x86_64-linux-android23"}
+          ]'
+          known="$(jq -c '[.[].artifact_id] + ["sing-box-cagedbird-darwin-arm64", "sing-box-cagedbird-android-apk"]' <<<"${targets}")"
+          unknown="$(jq -c --argjson known "${known}" '. - $known' <<<"${ARTIFACTS}")"
+          if [[ "${unknown}" != "[]" ]]; then
+            echo "Unknown artifact ids: ${unknown}" >&2
+            exit 1
+          fi
+          {
+            echo "binaries=$(jq -c --argjson want "${ARTIFACTS}" '[.[] | select(.artifact_id as $id | $want | index($id))]' <<<"${targets}")"
+            echo "darwin=$(jq -c 'index("sing-box-cagedbird-darwin-arm64") != null' <<<"${ARTIFACTS}")"
+            echo "apk=$(jq -c 'index("sing-box-cagedbird-android-apk") != null' <<<"${ARTIFACTS}")"
+          } >> "${GITHUB_OUTPUT}"
+
+  binaries:
+    name: ${{ matrix.artifact_id }}
+    needs: select
+    if: needs.select.outputs.binaries != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.select.outputs.binaries) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Setup Android NDK
+        if: matrix.target_os == 'android'
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+          local-cache: false
+      - name: Build binary
+        run: scripts/ci/build-binary.sh
+        env:
+          CAGEDBIRD_VERSION: ${{ inputs.version }}
+          TARGET_OS: ${{ matrix.target_os }}
+          TARGET_ARCH: ${{ matrix.target_arch }}
+          TARGET_GOAMD64: ${{ matrix.goamd64 }}
+          ANDROID_NDK_TRIPLE: ${{ matrix.android_ndk_triple }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ARTIFACT_ID: ${{ matrix.artifact_id }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_id }}
+          path: dist/cagedbird-binaries/${{ matrix.artifact_id }}.tar.gz
+          if-no-files-found: error
+
+  darwin:
+    name: sing-box-cagedbird-darwin-arm64
+    needs: select
+    if: needs.select.outputs.darwin == 'true'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+      - name: Build Darwin arm64 binary
+        run: scripts/ci/build-binary.sh
+        env:
+          CAGEDBIRD_VERSION: ${{ inputs.version }}
+          TARGET_OS: darwin
+          TARGET_ARCH: arm64
+          CGO_ENABLED: "1"
+          ARTIFACT_ID: sing-box-cagedbird-darwin-arm64
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-cagedbird-darwin-arm64
+          path: dist/cagedbird-binaries/sing-box-cagedbird-darwin-arm64.tar.gz
+          if-no-files-found: error
+
+  android-apk:
+    name: Android APK and AAR
+    needs: select
+    if: needs.select.outputs.apk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.6
+          cache: false
+      - name: Go and gomobile cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/pkg/gomobile
+            ~/go/bin/gomobile
+            ~/go/bin/gobind
+          key: android-go-gomobile-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile', 'cmd/internal/build_libbox/**') }}-r28-v0.1.12
+          restore-keys: |
+            android-go-gomobile-${{ runner.os }}-
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+          local-cache: false
+      - name: Setup OpenJDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle
+          key: gradle-${{ runner.os }}-${{ hashFiles('clients/android/**/*.gradle*', 'clients/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+      - name: Build Android APKs
+        run: scripts/ci/build-android-apks.sh
+        env:
+          CAGEDBIRD_VERSION: ${{ inputs.version }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+          CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.CAGEDBIRD_ANDROID_RELEASE_KEYSTORE_BASE64 }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-cagedbird-android-apk
+          path: dist/cagedbird-android
+          if-no-files-found: error
