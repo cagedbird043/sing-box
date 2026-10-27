@@ -252,3 +252,16 @@ The usual pattern is to add providers to `selector` or `urltest` groups and rout
   }
 }
 ```
+
+### Native API
+
+`daemon.ProviderService` is available through the native API service, boxdd and libbox command server, using the same transport authentication as `StartedService`.
+
+- `GetServiceInfo`: protocol version and supported capabilities.
+- `ListProviders` / `GetProvider`: provider metadata, subscription information, node tags and health.
+- `SubscribeProviders`: instance-scoped, revisioned snapshots; reconnect after an instance reload.
+- `RefreshProvider`: fetch and apply a remote subscription.
+- `HealthCheckProvider`: test a provider's nodes and return their health.
+
+Provider actions identify their target with `provider_tag`. Concurrent refresh/health-check actions return a busy error. Local and inline providers support health checks but not remote refresh.
+
