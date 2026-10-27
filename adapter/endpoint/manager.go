@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -12,17 +13,19 @@ import (
 var _ adapter.EndpointManager = (*Manager)(nil)
 
 type Manager struct {
-	registry      adapter.EndpointRegistry
-	access        sync.Mutex
-	scope         *adapter.Scope
-	endpoints     []adapter.Endpoint
-	endpointByTag map[string]adapter.Endpoint
+	registry          adapter.EndpointRegistry
+	access            sync.Mutex
+	scope             *adapter.Scope
+	endpoints         []adapter.Endpoint
+	endpointByTag     map[string]adapter.Endpoint
+	providerEndpoints map[string][]adapter.Endpoint
 }
 
 func NewManager(registry adapter.EndpointRegistry) *Manager {
 	return &Manager{
-		registry:      registry,
-		endpointByTag: make(map[string]adapter.Endpoint),
+		registry:          registry,
+		endpointByTag:     make(map[string]adapter.Endpoint),
+		providerEndpoints: make(map[string][]adapter.Endpoint),
 	}
 }
 
@@ -52,7 +55,11 @@ func (m *Manager) StartEndpoint(endpoint adapter.Endpoint) error {
 func (m *Manager) Endpoints() []adapter.Endpoint {
 	m.access.Lock()
 	defer m.access.Unlock()
-	return m.endpoints
+	endpoints := append([]adapter.Endpoint(nil), m.endpoints...)
+	for _, nodes := range m.providerEndpoints {
+		endpoints = append(endpoints, nodes...)
+	}
+	return endpoints
 }
 
 func (m *Manager) Get(tag string) (adapter.Endpoint, bool) {
@@ -75,5 +82,39 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointByTag[tag] = endpoint
+	return nil
+}
+
+func (m *Manager) PublishProvider(namespace string, nodes []adapter.Endpoint) error {
+	m.access.Lock()
+	defer m.access.Unlock()
+	prefix := namespace + "/"
+	old := m.providerEndpoints[namespace]
+	owned := make(map[string]bool, len(old))
+	for _, node := range old {
+		owned[node.Tag()] = true
+	}
+	seen := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		tag := node.Tag()
+		if namespace == "" || !strings.HasPrefix(tag, prefix) || len(tag) == len(prefix) {
+			return E.New("invalid provider endpoint namespace: ", tag)
+		}
+		if seen[tag] || (m.endpointByTag[tag] != nil && !owned[tag]) {
+			return E.New("duplicate endpoint tag: ", tag)
+		}
+		seen[tag] = true
+	}
+	for _, node := range old {
+		delete(m.endpointByTag, node.Tag())
+	}
+	for _, node := range nodes {
+		m.endpointByTag[node.Tag()] = node
+	}
+	if len(nodes) == 0 {
+		delete(m.providerEndpoints, namespace)
+	} else {
+		m.providerEndpoints[namespace] = nodes
+	}
 	return nil
 }
