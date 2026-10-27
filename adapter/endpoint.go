@@ -32,3 +32,8 @@ type EndpointManager interface {
 	Get(tag string) (Endpoint, bool)
 	Create(ctx context.Context, router Router, logger log.ContextLogger, tag string, endpointType string, options any) error
 }
+
+type ProviderEndpointManager interface {
+	EndpointManager
+	PublishProvider(namespace string, nodes []Endpoint) error
+}

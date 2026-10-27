@@ -26,6 +26,7 @@ var (
 	addrType               = reflect.TypeFor[badoption.Addr]()
 	prefixType             = reflect.TypeFor[badoption.Prefix]()
 	prefixableType         = reflect.TypeFor[badoption.Prefixable]()
+	regexpType             = reflect.TypeFor[badoption.Regexp]()
 	netipAddrType          = reflect.TypeFor[netip.Addr]()
 	netipPrefixType        = reflect.TypeFor[netip.Prefix]()
 	httpHeaderType         = reflect.TypeFor[badoption.HTTPHeader]()
@@ -80,6 +81,8 @@ func (g *generator) Describe(valueType reflect.Type) (*Node, error) {
 		return g.Define("Duration", func() (*Node, error) {
 			return DurationNode(), nil
 		})
+	case regexpType:
+		return StringNode(), nil
 	case addrType, netipAddrType:
 		return g.Define("IPAddress", func() (*Node, error) {
 			return IPAddressNode(), nil

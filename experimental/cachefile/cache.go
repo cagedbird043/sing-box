@@ -20,16 +20,18 @@ import (
 )
 
 var (
-	bucketSelected = []byte("selected")
-	bucketExpand   = []byte("group_expand")
-	bucketMode     = []byte("clash_mode")
-	bucketRuleSet  = []byte("rule_set")
+	bucketSelected     = []byte("selected")
+	bucketExpand       = []byte("group_expand")
+	bucketMode         = []byte("clash_mode")
+	bucketRuleSet      = []byte("rule_set")
+	bucketSubscription = []byte("outbound_subscription_v3")
 
 	bucketNameList = []string{
 		string(bucketSelected),
 		string(bucketExpand),
 		string(bucketMode),
 		string(bucketRuleSet),
+		string(bucketSubscription),
 		string(bucketRDRC),
 		string(bucketDNSCache),
 	}
