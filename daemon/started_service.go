@@ -318,7 +318,11 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 func (s *StartedService) Close() {
 	s.serviceAccess.Lock()
 	s.closed = true
+	instance := s.instance
 	s.serviceAccess.Unlock()
+	if instance != nil {
+		instance.closeProviderService()
+	}
 	s.serviceStatusSubscriber.Close()
 	s.logSubscriber.Close()
 	s.urlTestSubscriber.Close()
