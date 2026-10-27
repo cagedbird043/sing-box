@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"sync"
 
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
@@ -18,25 +19,39 @@ import (
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 )
 
 type Instance struct {
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	instance              *box.Box
-	connectionManager     adapter.ConnectionManager
-	clashMode             *clashmode.Manager
-	trafficManager        *trafficcontrol.Manager
-	cacheFile             adapter.CacheFile
-	pauseManager          pause.Manager
-	pauseCallback         *list.Element[pause.Callback]
-	urlTestHistoryStorage *urltest.HistoryStorage
-	outboundManager       adapter.OutboundManager
-	endpointManager       adapter.EndpointManager
-	logFactory            log.Factory
+	ctx                      context.Context
+	cancel                   context.CancelFunc
+	instance                 *box.Box
+	connectionManager        adapter.ConnectionManager
+	clashMode                *clashmode.Manager
+	trafficManager           *trafficcontrol.Manager
+	cacheFile                adapter.CacheFile
+	pauseManager             pause.Manager
+	pauseCallback            *list.Element[pause.Callback]
+	urlTestHistoryStorage    *urltest.HistoryStorage
+	outboundManager          adapter.OutboundManager
+	endpointManager          adapter.EndpointManager
+	providerManager          adapter.ProviderManager
+	logFactory               log.Factory
+	providerInstanceID       string
+	providerStateAccess      sync.Mutex
+	providerStateInitialized bool
+	providerRevision         uint64
+	providerStateRevisions   map[string]uint64
+	providerUpdateSubscriber *observable.Subscriber[struct{}]
+	providerUpdateObserver   *observable.Observer[struct{}]
+	providerCallbackAccess   sync.Mutex
+	providerServiceClosed    bool
+	providerCallbacks        map[adapter.Provider]*list.Element[adapter.ProviderUpdateCallback]
+	providerManagerObserver  adapter.ProviderManagerObservable
+	providerManagerCallback  *list.Element[adapter.ProviderManagerUpdateCallback]
 }
 
 func (s *StartedService) CheckConfig(ctx context.Context, configContent string) error {
@@ -142,13 +157,15 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 	i.cacheFile = service.FromContext[adapter.CacheFile](ctx)
 	i.outboundManager = service.FromContext[adapter.OutboundManager](ctx)
 	i.endpointManager = service.FromContext[adapter.EndpointManager](ctx)
+	i.providerManager = service.FromContext[adapter.ProviderManager](ctx)
 	i.logFactory = boxInstance.LogFactory()
+	i.initializeProviderService()
 	log.SetStdLogger(boxInstance.LogFactory().Logger())
 	return i, nil
 }
 
 func attachInstance(ctx context.Context) *Instance {
-	return &Instance{
+	instance := &Instance{
 		ctx:                   ctx,
 		connectionManager:     service.FromContext[adapter.ConnectionManager](ctx),
 		clashMode:             service.PtrFromContext[clashmode.Manager](ctx),
@@ -158,8 +175,11 @@ func attachInstance(ctx context.Context) *Instance {
 		urlTestHistoryStorage: service.PtrFromContext[urltest.HistoryStorage](ctx),
 		outboundManager:       service.FromContext[adapter.OutboundManager](ctx),
 		endpointManager:       service.FromContext[adapter.EndpointManager](ctx),
+		providerManager:       service.FromContext[adapter.ProviderManager](ctx),
 		logFactory:            service.FromContext[log.Factory](ctx),
 	}
+	instance.initializeProviderService()
+	return instance
 }
 
 func (i *Instance) Start() error {
@@ -167,6 +187,7 @@ func (i *Instance) Start() error {
 }
 
 func (i *Instance) Close() error {
+	i.closeProviderService()
 	i.cancel()
 	if i.pauseCallback != nil {
 		i.pauseManager.UnregisterCallback(i.pauseCallback)
