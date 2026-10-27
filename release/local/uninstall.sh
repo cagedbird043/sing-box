@@ -22,6 +22,7 @@ sudo rm -rf "$INSTALL_DATA_PATH"
 sudo rm -rf "$INSTALL_BIN_PATH/$BINARY_NAME"
 sudo rm -rf "$INSTALL_CONFIG_PATH"
 sudo rm -rf "$SYSTEMD_SERVICE_PATH/sing-box.service"
+sudo rm -f "$NM_DISPATCHER_PATH/$NM_DISPATCHER_HOOK_NAME"
 
 echo "Reloading systemd..."
 sudo systemctl daemon-reload
