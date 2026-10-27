@@ -254,3 +254,16 @@ icon: material/new-box
   }
 }
 ```
+
+### 原生 API
+
+`daemon.ProviderService` 注册于原生 API 服务、boxdd 和 libbox 命令服务器，与 `StartedService` 使用相同的传输认证。
+
+- `GetServiceInfo`：协议版本和能力列表。
+- `ListProviders` / `GetProvider`：提供者元数据、订阅用量、节点标签和健康状态。
+- `SubscribeProviders`：带实例标识和修订号的状态快照；实例重载后重新订阅。
+- `RefreshProvider`：下载并应用远程订阅。
+- `HealthCheckProvider`：测试提供者节点并返回健康状态。
+
+操作通过 `provider_tag` 指定目标。刷新和健康检查互斥，并发操作返回忙碌错误。本地和内联提供者支持健康检查，不支持远程刷新。
+
