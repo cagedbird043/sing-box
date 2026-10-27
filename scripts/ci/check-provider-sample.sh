@@ -45,4 +45,4 @@ cat > "${workdir}/provider-sample.json" <<'JSON'
 }
 JSON
 
-go run ./cmd/sing-box check -D "${workdir}" -c "${workdir}/provider-sample.json"
+go run -ldflags "$(< release/LDFLAGS)" ./cmd/sing-box check -D "${workdir}" -c "${workdir}/provider-sample.json"
