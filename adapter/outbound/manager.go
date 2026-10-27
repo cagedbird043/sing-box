@@ -21,16 +21,18 @@ type Manager struct {
 	access                  sync.RWMutex
 	outbounds               []adapter.Outbound
 	outboundByTag           map[string]adapter.Outbound
+	providerOutbounds       map[string][]adapter.Outbound
 	defaultOutbound         adapter.Outbound
 	defaultOutboundFallback func() (adapter.Outbound, error)
 }
 
 func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointManager, defaultTag string) *Manager {
 	return &Manager{
-		registry:      registry,
-		endpoint:      endpoint,
-		defaultTag:    defaultTag,
-		outboundByTag: make(map[string]adapter.Outbound),
+		registry:          registry,
+		endpoint:          endpoint,
+		defaultTag:        defaultTag,
+		outboundByTag:     make(map[string]adapter.Outbound),
+		providerOutbounds: make(map[string][]adapter.Outbound),
 	}
 }
 
@@ -147,7 +149,11 @@ func (m *Manager) startOutbounds(scope *adapter.Scope, outbounds []adapter.Outbo
 func (m *Manager) Outbounds() []adapter.Outbound {
 	m.access.RLock()
 	defer m.access.RUnlock()
-	return m.outbounds
+	outbounds := append([]adapter.Outbound(nil), m.outbounds...)
+	for _, nodes := range m.providerOutbounds {
+		outbounds = append(outbounds, nodes...)
+	}
+	return outbounds
 }
 
 func (m *Manager) Outbound(tag string) (adapter.Outbound, bool) {
@@ -184,6 +190,42 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	m.outboundByTag[tag] = outbound
 	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
 		m.defaultOutbound = outbound
+	}
+	return nil
+}
+
+// PublishProvider replaces only the nodes owned by a provider namespace. Their
+// lifecycle belongs to the provider's scope, never to the static manager scope.
+func (m *Manager) PublishProvider(namespace string, nodes []adapter.Outbound) error {
+	m.access.Lock()
+	defer m.access.Unlock()
+	prefix := namespace + "/"
+	old := m.providerOutbounds[namespace]
+	owned := make(map[string]bool, len(old))
+	for _, node := range old {
+		owned[node.Tag()] = true
+	}
+	seen := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		tag := node.Tag()
+		if namespace == "" || !strings.HasPrefix(tag, prefix) || len(tag) == len(prefix) {
+			return E.New("invalid provider outbound namespace: ", tag)
+		}
+		if seen[tag] || (m.outboundByTag[tag] != nil && !owned[tag]) {
+			return E.New("duplicate outbound tag: ", tag)
+		}
+		seen[tag] = true
+	}
+	for _, node := range old {
+		delete(m.outboundByTag, node.Tag())
+	}
+	for _, node := range nodes {
+		m.outboundByTag[node.Tag()] = node
+	}
+	if len(nodes) == 0 {
+		delete(m.providerOutbounds, namespace)
+	} else {
+		m.providerOutbounds[namespace] = nodes
 	}
 	return nil
 }
