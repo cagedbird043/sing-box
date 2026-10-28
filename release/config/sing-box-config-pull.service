@@ -1,0 +1,8 @@
+[Unit]
+Description=Pull and validate private sing-box configuration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sing-box/sing-box-config-pull
