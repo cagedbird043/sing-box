@@ -2836,6 +2836,28 @@
           "type": "object",
           "properties": {
             "type": {
+              "const": "race"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "servers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-tag-reference": "dns_server"
+              }
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
               "const": "resolved"
             },
             "tag": {
