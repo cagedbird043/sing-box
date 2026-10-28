@@ -29,6 +29,9 @@ def download(url, destination):
         with urllib.request.urlopen(url, timeout=30) as response:
             with destination.open("wb") as output:
                 shutil.copyfileobj(response, output)
+            expected_length = response.headers.get("Content-Length")
+            if expected_length is not None and destination.stat().st_size != int(expected_length):
+                raise urllib.error.ContentTooShortError("CDN response ended before Content-Length", None)
     except (urllib.error.URLError, TimeoutError):
         print(f"CDN unavailable; downloading {destination.name} through sjc-edge", flush=True)
         with destination.open("wb") as output:
