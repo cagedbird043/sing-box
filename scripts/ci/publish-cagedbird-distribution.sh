@@ -82,6 +82,8 @@ commit_if_changed() {
 
 write_homebrew_formula() {
   local formula="$1"
+  local pull_sha
+  pull_sha="$(sha256sum release/config/sing-box-config-pull | cut -d ' ' -f 1)"
   cat > "${formula}" <<FORMULA
 class SingBoxCagedbird < Formula
   desc "Universal proxy platform with native Clash subscription support"
@@ -114,10 +116,35 @@ class SingBoxCagedbird < Formula
 
   conflicts_with "sing-box", because: "both install the sing-box binary"
 
+  resource "config-pull" do
+    url "https://raw.githubusercontent.com/${SOURCE_REPO}/${tag}/release/config/sing-box-config-pull"
+    sha256 "${pull_sha}"
+  end
+
   def install
     bin.install "sing-box"
     prefix.install "BUILD-INFO.txt"
     pkgshare.install "LICENSE"
+    resource("config-pull").stage { libexec.install Dir["*"].fetch(0) => "sing-box-config-pull" }
+    chmod 0755, libexec/"sing-box-config-pull"
+    (etc/"sing-box").mkpath
+    (var/"lib/sing-box").mkpath
+    (pkgshare/"cn.cagedbird.sing-box-config-pull.plist").write <<~PLIST
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0"><dict>
+        <key>Label</key><string>cn.cagedbird.sing-box-config-pull</string>
+        <key>ProgramArguments</key><array><string>#{opt_libexec}/sing-box-config-pull</string></array>
+        <key>EnvironmentVariables</key><dict>
+          <key>SING_BOX_CONFIG_DIR</key><string>#{etc}/sing-box</string>
+          <key>SING_BOX_BIN</key><string>#{opt_bin}/sing-box</string>
+        </dict>
+        <key>RunAtLoad</key><true/>
+        <key>StartInterval</key><integer>1800</integer>
+        <key>StandardOutPath</key><string>#{var}/log/sing-box-config-pull.log</string>
+        <key>StandardErrorPath</key><string>#{var}/log/sing-box-config-pull.log</string>
+      </dict></plist>
+    PLIST
 
     generate_completions_from_executable(bin/"sing-box", "completion")
   end

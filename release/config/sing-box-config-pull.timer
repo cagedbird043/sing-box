@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically pull private sing-box configuration
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
