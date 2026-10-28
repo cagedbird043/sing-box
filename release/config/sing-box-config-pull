@@ -1,0 +1,64 @@
+#!/bin/sh
+# Fetch a private configuration without exposing its URL in diagnostics.
+set -eu
+umask 077
+
+config_dir=${SING_BOX_CONFIG_DIR:-/etc/sing-box}
+url_file=${SING_BOX_CONFIG_URL_FILE:-$config_dir/config-url}
+config_file=${SING_BOX_CONFIG_FILE:-$config_dir/config.json}
+sing_box=${SING_BOX_BIN:-/usr/bin/sing-box}
+
+notice() { printf '%s\n' "sing-box-config-pull: $*"; }
+fail() { notice "$*" >&2; exit 1; }
+
+if [ ! -e "$url_file" ]; then
+    notice "URL file not configured; skipping."
+    exit 0
+fi
+[ -r "$url_file" ] || fail "Cannot read URL file."
+url=$(cat "$url_file") || fail "Cannot read URL file."
+[ -n "$url" ] || fail "URL file is empty."
+
+mkdir -p "$(dirname "$config_file")" || fail "Cannot create config directory."
+tmp=$(mktemp "$(dirname "$config_file")/.config-pull.XXXXXX") || fail "Cannot create temporary config."
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+
+# curl diagnostics can contain the private URL, so report only our own errors.
+if ! curl --fail --silent --location --connect-timeout 20 --max-time 120 --output "$tmp" -- "$url" 2>/dev/null; then
+    fail "Download failed; current config kept."
+fi
+if ! "$sing_box" check -c "$tmp" >/dev/null 2>&1; then
+    fail "Downloaded config failed sing-box check; current config kept."
+fi
+if [ -f "$config_file" ] && cmp -s "$tmp" "$config_file"; then
+    notice "Config unchanged."
+    exit 0
+fi
+mv -f "$tmp" "$config_file" || fail "Cannot replace config."
+notice "Config updated."
+case $(uname -s) in
+    Darwin)
+        service_label=homebrew.mxcl.sing-box-cagedbird
+        service_target=system/$service_label
+        if ! launchctl print "$service_target" >/dev/null 2>&1; then
+            # Every active GUI session has processes owned by its user, including
+            # sessions other than the current console user after fast switching.
+            service_target=$(
+                ps -axo uid= | sort -u | while read -r uid; do
+                    case $uid in ''|*[!0-9]*) continue ;; esac
+                    target=gui/$uid/$service_label
+                    if launchctl print "$target" >/dev/null 2>&1; then
+                        printf '%s\n' "$target"
+                        break
+                    fi
+                done
+            )
+        fi
+        [ -n "$service_target" ] || fail "Config installed, but Homebrew service $service_label was not found in system or any active gui/<uid> domain. Start it with brew services first."
+        launchctl kickstart -k "$service_target" || fail "Config installed, but Homebrew service restart failed in $service_target."
+        ;;
+    Linux)
+        systemctl try-restart sing-box.service || fail "Config installed, but service restart failed."
+        ;;
+    *) fail "Unsupported service platform." ;;
+esac
