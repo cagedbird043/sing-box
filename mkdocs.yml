@@ -91,6 +91,7 @@ nav:
               - Legacy: configuration/dns/server/legacy.md
               - Local: configuration/dns/server/local.md
               - Hosts: configuration/dns/server/hosts.md
+              - Race: configuration/dns/server/race.md
               - TCP: configuration/dns/server/tcp.md
               - UDP: configuration/dns/server/udp.md
               - TLS: configuration/dns/server/tls.md

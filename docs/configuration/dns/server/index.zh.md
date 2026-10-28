@@ -36,6 +36,7 @@ DNS 服务器的类型。
 | empty (default) | :material-note-remove: [Legacy](./legacy/) |
 | `local`         | [Local](./local/)         |
 | `hosts`         | [Hosts](./hosts/)         |
+| `race`          | [Race](./race/)           |
 | `tcp`           | [TCP](./tcp/)             |
 | `udp`           | [UDP](./udp/)             |
 | `tls`           | [TLS](./tls/)             |

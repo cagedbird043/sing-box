@@ -216,6 +216,9 @@ func New(options Options) (*Box, error) {
 	service.MustRegister[adapter.NetworkNamespaceManager](ctx, netnsManager)
 	internalServices = append(internalServices, netnsManager)
 	dnsOptions := common.PtrValueOrDefault(options.DNS)
+	if err := dnsOptions.ValidateRaceServers(); err != nil {
+		return nil, err
+	}
 	endpointManager := endpoint.NewManager(endpointRegistry)
 	inboundManager := inbound.NewManager(inboundRegistry, endpointManager)
 	outboundManager := outbound.NewManager(outboundRegistry, endpointManager, routeOptions.Final)
