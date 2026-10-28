@@ -38,7 +38,24 @@ mv -f "$tmp" "$config_file" || fail "Cannot replace config."
 notice "Config updated."
 case $(uname -s) in
     Darwin)
-        launchctl kickstart -k system/homebrew.mxcl.sing-box-cagedbird || fail "Config installed, but Homebrew service restart failed."
+        service_label=homebrew.mxcl.sing-box-cagedbird
+        service_target=system/$service_label
+        if ! launchctl print "$service_target" >/dev/null 2>&1; then
+            # Every active GUI session has processes owned by its user, including
+            # sessions other than the current console user after fast switching.
+            service_target=$(
+                ps -axo uid= | sort -u | while read -r uid; do
+                    case $uid in ''|*[!0-9]*) continue ;; esac
+                    target=gui/$uid/$service_label
+                    if launchctl print "$target" >/dev/null 2>&1; then
+                        printf '%s\n' "$target"
+                        break
+                    fi
+                done
+            )
+        fi
+        [ -n "$service_target" ] || fail "Config installed, but Homebrew service $service_label was not found in system or any active gui/<uid> domain. Start it with brew services first."
+        launchctl kickstart -k "$service_target" || fail "Config installed, but Homebrew service restart failed in $service_target."
         ;;
     Linux)
         systemctl try-restart sing-box.service || fail "Config installed, but service restart failed."

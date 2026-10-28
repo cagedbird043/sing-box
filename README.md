@@ -53,8 +53,8 @@ The generated `cagedbird043/tap/sing-box-cagedbird` formula installs the puller
 under its `libexec` and a launchd job in its `share/sing-box-cagedbird` directory.
 Store the URL at `$(brew --prefix)/etc/sing-box/config-url` (normally
 `/opt/homebrew/etc/sing-box/config-url` on Apple Silicon); the target is the adjacent
-`config.json`. Run the main Homebrew service in the system domain before enabling
-the root-owned pull job:
+`config.json`. Start the main Homebrew service before enabling the root-owned
+pull job (the formula recommends running the main service as root):
 
 ```sh
 sudo brew services start sing-box-cagedbird
@@ -65,8 +65,10 @@ sudo launchctl bootstrap system /Library/LaunchDaemons/cn.cagedbird.sing-box-con
 ```
 
 The job fetches immediately and every 30 minutes. Changes restart the existing
-Homebrew-managed service with `launchctl kickstart -k
-system/homebrew.mxcl.sing-box-cagedbird`. Logs are in
+Homebrew-managed service with `launchctl kickstart -k`, checking the `system`
+domain first and then active `gui/<uid>` domains for a user-managed service.
+If the service is not loaded in either domain, the puller reports an error.
+Logs are in
 `$(brew --prefix)/var/log/sing-box-config-pull.log`. To disable it, run
 `sudo launchctl bootout system /Library/LaunchDaemons/cn.cagedbird.sing-box-config-pull.plist`.
 An absent URL file is a successful, logged skip on either platform.
