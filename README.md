@@ -103,3 +103,11 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 In addition, no derivative work may use the name or imply association
 with this application without prior consent.
 ```
+
+## Agent-native Skills
+
+- [cagedbird-release](.agents/skills/cagedbird-release/SKILL.md): repeatable candidate CI,
+  alpha promotion, GitHub Release / Android APK, Homebrew and AUR publication.
+  Trigger phrases: “发布 cagedbird”, “打一个 sing-box 个人版”, “更新 Homebrew/AUR”,
+  “ship cagedbird release”. The bundled `scripts/update-aur.py <tag>` builds,
+  verifies and pushes the AUR wrapper in one command.
