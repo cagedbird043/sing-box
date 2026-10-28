@@ -105,6 +105,8 @@ The local cache path for the parsed provider document.
 
 If set, the downloaded subscription is parsed and saved as a sing-box JSON provider cache. On startup, the provider can restore from this cache before the next successful remote update.
 
+If the cache cannot be restored (for example, it is invalid or references a DNS server that is no longer configured), the provider logs the error, invalidates the saved subscription, removes the cache file when possible, and downloads the subscription immediately. Startup fails only if this initial download cannot supply a usable subscription. Cache write failures are logged without rejecting an otherwise successful update.
+
 #### user_agent
 
 The HTTP `User-Agent` used to download the subscription.

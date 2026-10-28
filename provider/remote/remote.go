@@ -123,7 +123,8 @@ func (s *ProviderRemote) StartContext(ctx context.Context, startContext *adapter
 	s.cacheFile = service.FromContext[adapter.CacheFile](s.ctx)
 	err := s.loadCacheFile()
 	if err != nil {
-		return E.Cause(err, "restore cached outbound provider")
+		s.logger.Error(E.Cause(err, "restore cached outbound provider"))
+		s.discardCacheFile()
 	}
 	transport, err := s.resolveTransport()
 	if err != nil {
@@ -250,7 +251,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 		if s.path != "" {
 			content, _ := json.Marshal(option.Options{Outbounds: s.lastOutOpts, Endpoints: s.lastEPOpts})
 			if err := s.saveCacheFile(hasInfo, info, content); err != nil {
-				return err
+				s.logger.Error("save outbound provider cache file: ", err)
 			}
 		}
 		s.UpdateGroups()
@@ -281,7 +282,7 @@ func (s *ProviderRemote) fetch(ctx context.Context, isStart bool) error {
 		content, _ := json.Marshal(option.Options{Outbounds: s.lastOutOpts, Endpoints: s.lastEPOpts})
 		if s.path != "" {
 			if err := s.saveCacheFile(hasInfo, info, content); err != nil {
-				return err
+				s.logger.Error("save outbound provider cache file: ", err)
 			}
 		} else if hasInfo {
 			content = append([]byte(infoStr+"\n"), content...)
@@ -310,6 +311,10 @@ func (s *ProviderRemote) loadCacheFile() error {
 	var saveSub *adapter.SavedSubscription
 	if s.cacheFile != nil {
 		if saveSub = s.cacheFile.LoadSubscription(s.Tag()); saveSub != nil {
+			// An empty saved subscription also invalidates a file that could not be removed.
+			if saveSub.LastUpdated.IsZero() {
+				return nil
+			}
 			s.hash = saveSub.Hash
 		}
 	}
@@ -327,8 +332,7 @@ func (s *ProviderRemote) loadCacheFile() error {
 		}
 		if saveSub != nil {
 			if !s.hash.Equal(hash.MakeHash(content)) {
-				s.logger.Error("load outbound provider cache file failed: validation failed")
-				return nil
+				return E.New("outbound provider cache file validation failed")
 			}
 			lastUpdated = saveSub.LastUpdated
 			lastEtag = saveSub.LastEtag
@@ -352,6 +356,21 @@ func (s *ProviderRemote) loadCacheFile() error {
 	s.lastEtag = lastEtag
 	s.UpdateGroups()
 	return nil
+}
+
+func (s *ProviderRemote) discardCacheFile() {
+	s.hash = hash.HashType{}
+	s.lastEtag = ""
+	if s.cacheFile != nil {
+		if err := s.cacheFile.SaveSubscription(s.Tag(), &adapter.SavedSubscription{}); err != nil {
+			s.logger.Error("discard outbound provider subscription cache: ", err)
+		}
+	}
+	if s.path != "" {
+		if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
+			s.logger.Error("remove outbound provider cache file: ", err)
+		}
+	}
 }
 
 func (s *ProviderRemote) loadFromContent(contentRaw []byte, updatedAt time.Time) error {

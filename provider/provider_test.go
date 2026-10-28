@@ -4,14 +4,19 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/hash"
+	"github.com/sagernet/sing-box/experimental/cachefile"
 	"github.com/sagernet/sing-box/include"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/service"
@@ -140,5 +145,136 @@ func TestRemoteProviderRefreshAndOfflineCache(t *testing.T) {
 	}
 	if _, found := instance.Outbound().Outbound("sub/obsolete"); found {
 		t.Fatal("offline cache restored removed node")
+	}
+}
+
+func TestRemoteProviderUnusableCache(t *testing.T) {
+	const valid = `{"outbounds":[{"type":"shadowsocks","tag":"fresh","server":"127.0.0.1","server_port":10001,"method":"aes-128-gcm","password":"test"}]}`
+	const missingResolver = `{"outbounds":[{"type":"shadowsocks","tag":"stale","server":"proxy.example","server_port":10001,"method":"aes-128-gcm","password":"test","domain_resolver":"dns-edgex"}]}`
+	for _, test := range []struct {
+		name          string
+		content       string
+		usePath       bool
+		hashMismatch  bool
+		invalidated   bool
+		fetchFails    bool
+		cacheWriteErr bool
+	}{
+		{name: "file_parse_error", content: "{invalid", usePath: true},
+		{name: "saved_parse_error", content: "{invalid"},
+		{name: "file_missing_resolver", content: missingResolver, usePath: true},
+		{name: "saved_missing_resolver", content: missingResolver},
+		{name: "file_hash_mismatch", content: valid, usePath: true, hashMismatch: true},
+		{name: "file_invalidated", content: missingResolver, usePath: true, invalidated: true},
+		{name: "saved_invalidated", invalidated: true},
+		{name: "file_fetch_failure", content: missingResolver, usePath: true, fetchFails: true},
+		{name: "saved_fetch_failure", content: missingResolver, fetchFails: true},
+		{name: "cache_write_failure", usePath: true, invalidated: true, cacheWriteErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			path := filepath.Join(directory, "subscription.json")
+			cacheOptions := option.CacheFileOptions{Path: filepath.Join(directory, "cache.db")}
+			seedContext := context.Background()
+			cache := cachefile.New(seedContext, log.StdLogger(), cacheOptions)
+			scope := adapter.NewScope(seedContext, log.StdLogger())
+			if err := cache.Start(adapter.StartStateInitialize, scope); err != nil {
+				t.Fatal(err)
+			}
+			saved := &adapter.SavedSubscription{}
+			if !test.invalidated {
+				saved.LastUpdated = time.Now()
+				saved.LastEtag = `"stale"`
+				if test.usePath {
+					saved.Hash = hash.MakeHash([]byte(test.content))
+					if test.hashMismatch {
+						saved.Hash = hash.MakeHash([]byte("different content"))
+					}
+				} else {
+					saved.Content = []byte(test.content)
+				}
+			}
+			if err := cache.SaveSubscription("sub", saved); err != nil {
+				t.Fatal(err)
+			}
+			if err := scope.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if test.usePath && test.content != "" {
+				if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var requests atomic.Int32
+			var conditional atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				conditional.Store(r.Header.Get("If-None-Match") != "")
+				if test.fetchFails {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				if test.cacheWriteErr {
+					// Make persistence fail only after construction and cache restoration.
+					if err := os.MkdirAll(path, 0o700); err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+				}
+				_, _ = w.Write([]byte(valid))
+			}))
+			defer server.Close()
+			providerOptions := map[string]any{"type": "remote", "tag": "sub", "url": server.URL, "http_client": map[string]any{"version": 1}}
+			if test.usePath {
+				providerOptions["path"] = path
+			}
+			config, err := json.Marshal(map[string]any{
+				"log":          map[string]any{"disabled": true},
+				"providers":    []any{providerOptions},
+				"outbounds":    []any{map[string]any{"type": "direct", "tag": "direct"}},
+				"experimental": map[string]any{"cache_file": map[string]any{"enabled": true, "path": cacheOptions.Path}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := service.ContextWithDefaultRegistry(include.Context(context.Background()))
+			options, err := json.UnmarshalExtendedContext[option.Options](ctx, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instance, err := box.New(box.Options{Options: options, Context: ctx})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer instance.Close()
+			err = instance.Start()
+			if test.fetchFails {
+				if err == nil {
+					t.Fatal("startup succeeded without a usable cache or initial download")
+				}
+				if saved := service.FromContext[adapter.CacheFile](ctx).LoadSubscription("sub"); saved != nil && (!saved.LastUpdated.IsZero() || len(saved.Content) != 0 || saved.LastEtag != "") {
+					t.Fatalf("failed cache was not invalidated: %+v", saved)
+				}
+				if test.usePath {
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Fatalf("failed cache file remains: %v", err)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, found := instance.Outbound().Outbound("sub/fresh"); !found {
+					t.Fatal("initial download did not publish fresh provider members")
+				}
+			}
+			if requests.Load() != 1 {
+				t.Fatalf("initial download requests: %d", requests.Load())
+			}
+			if conditional.Load() {
+				t.Fatal("initial download reused the discarded cache ETag")
+			}
+		})
 	}
 }
