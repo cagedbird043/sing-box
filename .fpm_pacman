@@ -5,6 +5,7 @@
 --description "The universal proxy platform."
 --url "https://sing-box.sagernet.org/"
 --maintainer "nekohasekai <contact-git@sekai.icu>"
+--depends curl
 --config-files etc/sing-box/config.json
 --after-install release/config/sing-box.postinst
 
@@ -14,6 +15,9 @@ release/config/sing-box.service=/usr/lib/systemd/system/sing-box.service
 release/config/sing-box@.service=/usr/lib/systemd/system/sing-box@.service
 release/config/sing-box-split-dns.xml=/usr/share/dbus-1/system.d/sing-box-split-dns.conf
 release/config/sing-box-network-recover=/usr/lib/NetworkManager/dispatcher.d/90-sing-box-recover
+release/config/sing-box-config-pull=/usr/lib/sing-box/sing-box-config-pull
+release/config/sing-box-config-pull.service=/usr/lib/systemd/system/sing-box-config-pull.service
+release/config/sing-box-config-pull.timer=/usr/lib/systemd/system/sing-box-config-pull.timer
 
 release/completions/sing-box.bash=/usr/share/bash-completion/completions/sing-box.bash
 release/completions/sing-box.fish=/usr/share/fish/vendor_completions.d/sing-box.fish
