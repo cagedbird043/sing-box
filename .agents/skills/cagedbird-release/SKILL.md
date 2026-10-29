@@ -8,16 +8,11 @@ compatibility: Git、gh、Go、Python 3、Arch makepkg/pacman、SSH sjc-edge；m
 
 ## 范围与前置条件
 
-- 源仓库固定为 `cagedbird043/sing-box`，不能发布到 SagerNet。
-- `gh workflow/run/release` 命令始终传 `-R cagedbird043/sing-box`。
-  `gh api` 不支持 `-R`，使用显式 `repos/cagedbird043/sing-box/...` 端点。
+常驻规则（仓库与分支、提交约定、本机构建、`gh` 用法、版本号、产物复用）见仓库根目录 `FORK.md`，这里只补充发布专用的约束：
+
 - 主工作树通常为 `../sing-box`，候选工作树为 `../wt-candidate`；检查实际 `git worktree list`。
   只在干净的候选工作树准备分支，保留用户未提交内容；不能为了重跑发布而重置已有修改。
-- 本机 Go 命令使用 `GOTOOLCHAIN=go1.25.5`，系统新版 Go 可能触发 linkname 兼容错误。
-  CI 按现有工作流工具链。不要修改上游工作流或无关 provider/tailscale 实现。
-- `clients/android`、`clients/apple`、`clients/desktop` 在本地工作树保持未初始化，gitlink 不变。
-  若创建工作树后复制进来的目录带有失效 `.git`，仅在确认其为多余副本且无用户修改后清空目录。
-- 提交信息使用中文，无 AI 署名。纯文档、打包提交带 `[skip ci]`；手动 dispatch 不受其影响。
+- 若创建工作树后复制进来的 `clients/*` 目录带有失效 `.git`，仅在确认其为多余副本且无用户修改后清空目录。
 - 发布前记录 `git rev-parse origin/cagedbird/alpha` 为旧 alpha SHA；强推使用这个明确的租约值。
 
 ## 本地验收
