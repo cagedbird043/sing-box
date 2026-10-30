@@ -15,6 +15,7 @@
   "include": "",
   "exclude": "",
   "default": "proxy-c",
+  "url": "",
   "interrupt_exist_connections": false
 }
 ```
@@ -49,6 +50,12 @@ An empty provider group uses the direct `Compatible` outbound.
 #### default
 
 The default outbound tag. The first outbound will be used if empty.
+
+#### url
+
+The URL used to display and manually test member delays. `https://www.gstatic.com/generate_204` will be used if empty.
+
+Member delays show only results at this group's target and are not replaced by other groups testing different targets. A manual test of this group probes members at this target and at the target of every URL-test group containing them, then lets those groups re-select. It does not affect the selector's selection.
 
 #### interrupt_exist_connections
 

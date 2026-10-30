@@ -15,6 +15,7 @@
   "include": "",
   "exclude": "",
   "default": "proxy-c",
+  "url": "",
   "interrupt_exist_connections": false
 }
 ```
@@ -49,6 +50,12 @@
 #### default
 
 默认的出站标签。默认使用第一个出站。
+
+#### url
+
+用于显示和手动测试成员延迟的链接。默认使用 `https://www.gstatic.com/generate_204`。
+
+成员延迟只显示本组目标的测速结果，不会被其他组针对不同目标的测速覆盖。手动测试本组时，成员按本组目标测速，同时按包含它的各 URL-test 组的目标测速，测完这些组重新选路。不影响选择器的选路。
 
 #### interrupt_exist_connections
 

@@ -239,7 +239,7 @@ func buildProvider(provider adapter.Provider, snapshot adapter.ProviderSnapshot,
 	for _, outbound := range snapshot.Outbounds {
 		health := snapshot.Health[outbound.Tag()]
 		if health.CheckedAt.IsZero() && instance.urlTestHistoryStorage != nil {
-			if history := instance.urlTestHistoryStorage.LoadURLTestHistory(group.RealTag(outbound, N.NetworkTCP)); history != nil {
+			if history := instance.urlTestHistoryStorage.LoadLatestURLTestHistory(group.RealTag(outbound, N.NetworkTCP)); history != nil {
 				health = adapter.ProviderHealth{Available: true, Delay: history.Delay, CheckedAt: history.Time}
 			}
 		}
