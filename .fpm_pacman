@@ -16,6 +16,7 @@ release/config/sing-box@.service=/usr/lib/systemd/system/sing-box@.service
 release/config/sing-box-split-dns.xml=/usr/share/dbus-1/system.d/sing-box-split-dns.conf
 release/config/sing-box-network-recover=/usr/lib/NetworkManager/dispatcher.d/90-sing-box-recover
 release/config/sing-box-config-pull=/usr/lib/sing-box/sing-box-config-pull
+release/config/sing-box-update=/usr/bin/sing-box-update
 release/config/sing-box-config-pull.service=/usr/lib/systemd/system/sing-box-config-pull.service
 release/config/sing-box-config-pull.timer=/usr/lib/systemd/system/sing-box-config-pull.timer
 

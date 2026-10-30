@@ -70,9 +70,9 @@ def main():
         if line.startswith("release/config/") and "=" in line:
             source, target = line.split("=", 1)
             mappings.append((source, target))
-    required = {"sing-box-config-pull", "sing-box-config-pull.service", "sing-box-config-pull.timer"}
+    required = {"sing-box-config-pull", "sing-box-config-pull.service", "sing-box-config-pull.timer", "sing-box-update"}
     if not required.issubset({Path(source).name for source, _ in mappings}):
-        sys.exit("Release is missing config-pull package mappings")
+        sys.exit("Release is missing config-pull or update package mappings")
     with tempfile.TemporaryDirectory(prefix="sing-box-aur-") as directory:
         build = Path(directory)
         sums = []
@@ -98,7 +98,7 @@ def main():
         for source, target in mappings:
             name = Path(source).name
             source_lines.append(f'"{name}-${{_pkgver}}::${{_raw_url}}/{source}"')
-            mode = "755" if name in ("sing-box-config-pull", "sing-box-network-recover") else "644"
+            mode = "755" if name in ("sing-box-config-pull", "sing-box-network-recover", "sing-box-update") else "644"
             install_lines.append(f'    install -Dm{mode} "{name}-${{_pkgver}}" "${{pkgdir}}{target}"')
         pkgbuild = '''# Maintainer: cagedbird043 <cagedbird043@gmail.com>
 

@@ -53,6 +53,11 @@ The timer runs two minutes after boot and every 30 minutes thereafter. A changed
 config uses `systemctl try-restart sing-box.service`, so an inactive main service
 is not started. Enable the main service separately when ready. `curl` is required.
 
+For a one-command config pull, subscription refresh, and provider status table, run
+`sudo sing-box-update`. It waits for the API after a restart, then refreshes every
+refreshable provider. The running service must expose the `api` inbound at
+`127.0.0.1:9090` (override with `sudo env BOX_API_URL=host:port sing-box-update`).
+
 ### macOS / Homebrew
 
 The generated `cagedbird043/tap/sing-box-cagedbird` formula installs the puller
@@ -77,6 +82,13 @@ If the service is not loaded in either domain, the puller reports an error.
 Logs are in
 `$(brew --prefix)/var/log/sing-box-config-pull.log`. To disable it, run
 `sudo launchctl bootout system /Library/LaunchDaemons/cn.cagedbird.sing-box-config-pull.plist`.
+
+Run `sudo sing-box-update` to pull the config, wait for the API after any restart,
+refresh all refreshable subscription providers, and print their status. The Homebrew
+wrapper supplies the config and executable paths; the existing root LaunchDaemon
+remains unchanged. The service must expose the `api` inbound at `127.0.0.1:9090`
+(override with `sudo env BOX_API_URL=host:port sing-box-update`).
+
 An absent URL file is a successful, logged skip on either platform.
 
 For isolated testing, paths can be overridden with `SING_BOX_CONFIG_DIR`,
