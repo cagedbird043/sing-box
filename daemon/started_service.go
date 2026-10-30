@@ -14,7 +14,6 @@ import (
 	"github.com/sagernet/sing-box/common/networkquality"
 	"github.com/sagernet/sing-box/common/stun"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
-	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/deprecated"
 	"github.com/sagernet/sing-box/experimental/locale"
@@ -624,7 +623,16 @@ func (s *StartedService) readGroups() *Groups {
 			var item GroupItem
 			item.Tag = itemTag
 			item.Type = itemOutbound.Type()
-			if history := historyStorage.LoadURLTestHistory(group.RealTag(itemOutbound, N.NetworkTCP)); history != nil {
+			var history *adapter.URLTestHistory
+			switch typedGroup := iGroup.(type) {
+			case *group.URLTest:
+				history = typedGroup.URLTestHistory(itemOutbound, N.NetworkTCP)
+			case *group.Selector:
+				history = typedGroup.URLTestHistory(itemOutbound, N.NetworkTCP)
+			default:
+				history = group.LoadURLTestHistory(historyStorage, itemOutbound, N.NetworkTCP)
+			}
+			if history != nil {
 				item.UrlTestTime = history.Time.Unix()
 				item.UrlTestDelay = int32(history.Delay)
 			}
@@ -731,29 +739,11 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 	if !isLoaded {
 		return nil, status.Error(codes.NotFound, "outbound not found: "+outboundTag)
 	}
-	historyStorage := boxService.urlTestHistoryStorage
 	urlTest, isURLTest := outbound.(*group.URLTest)
-	outboundGroup, isOutboundGroup := outbound.(adapter.OutboundGroup)
 	if isURLTest {
 		go urlTest.CheckOutbounds()
-	} else if isOutboundGroup {
-		outbounds := common.FilterNotNil(common.Map(outboundGroup.All(), func(it string) adapter.Outbound {
-			itOutbound, _ := boxService.outboundManager.Outbound(it)
-			return itOutbound
-		}))
-		go group.URLTestOutbounds(boxService.ctx, boxService.outboundManager, historyStorage, boxService.logFactory.Logger(), outbounds, "", 0, true)
 	} else {
-		go func() {
-			t, err := urltest.URLTest(boxService.ctx, "", outbound)
-			if err != nil {
-				historyStorage.DeleteURLTestHistory(outboundTag)
-			} else {
-				historyStorage.StoreURLTestHistory(outboundTag, &adapter.URLTestHistory{
-					Time:  time.Now(),
-					Delay: t,
-				})
-			}
-		}()
+		go group.URLTestMembers(boxService.ctx, boxService.outboundManager, boxService.urlTestHistoryStorage, boxService.logFactory.Logger(), []adapter.Outbound{outbound})
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -1186,7 +1176,7 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 					Tag:  ob.Tag(),
 					Type: ob.Type(),
 				}
-				if history := historyStorage.LoadURLTestHistory(group.RealTag(ob, N.NetworkTCP)); history != nil {
+				if history := group.LoadURLTestHistory(historyStorage, ob, N.NetworkTCP); history != nil {
 					item.UrlTestTime = history.Time.Unix()
 					item.UrlTestDelay = int32(history.Delay)
 				}
@@ -1197,7 +1187,7 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 					Tag:  ep.Tag(),
 					Type: ep.Type(),
 				}
-				if history := historyStorage.LoadURLTestHistory(group.RealTag(ep, N.NetworkTCP)); history != nil {
+				if history := group.LoadURLTestHistory(historyStorage, ep, N.NetworkTCP); history != nil {
 					item.UrlTestTime = history.Time.Unix()
 					item.UrlTestDelay = int32(history.Delay)
 				}

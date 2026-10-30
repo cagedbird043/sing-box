@@ -44,6 +44,10 @@ When `enabled`, prefer the first available member within `max_delay`. If every a
 
 The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
 
+Probe history and automatic selection are scoped to the outbound and the effective test URL. Groups testing the same outbound against different URLs do not overwrite or invalidate each other's results. Empty URLs share the default URL's history. Nested URL-test groups retain their own configured targets.
+
+Provider health checks and manual API tests share results only when their target URL matches. A manual gRPC `URLTest` of a node or a non-URL-test group probes each node at its display target (the containing selector's `url`, or the default URL when tested directly) and at the target of every URL-test group containing it, then lets those groups re-select. Group member delays show only results at that group's effective target; a plain node shown outside any group displays its default-URL result and never borrows another target's latest result. Replacing or removing provider nodes invalidates their history across all targets, and results from retired node generations are ignored.
+
 #### interval
 
 The test interval. `3m` will be used if empty.

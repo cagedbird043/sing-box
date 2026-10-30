@@ -5,6 +5,7 @@ import "github.com/sagernet/sing/common/json/badoption"
 type SelectorOutboundOptions struct {
 	GroupCommonOption
 	Default                   string `json:"default,omitempty" reference:"outbound"`
+	URL                       string `json:"url,omitempty"`
 	InterruptExistConnections bool   `json:"interrupt_exist_connections,omitempty"`
 }
 

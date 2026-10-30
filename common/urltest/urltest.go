@@ -21,15 +21,33 @@ import (
 	"github.com/sagernet/sing/common/observable"
 )
 
+const DefaultURL = "https://www.gstatic.com/generate_204"
+
+func NormalizeURL(link string) string {
+	if link == "" {
+		return DefaultURL
+	}
+	return link
+}
+
+type HistoryKey struct {
+	OutboundTag string
+	URL         string
+}
+
 type HistoryStorage struct {
-	access       sync.RWMutex
-	delayHistory map[string]*adapter.URLTestHistory
-	updateHooks  []*observable.Subscriber[struct{}]
+	access        sync.RWMutex
+	delayHistory  map[HistoryKey]*adapter.URLTestHistory
+	latestHistory map[string]HistoryKey
+	generations   map[string]uint64
+	updateHooks   []*observable.Subscriber[struct{}]
 }
 
 func NewHistoryStorage() *HistoryStorage {
 	return &HistoryStorage{
-		delayHistory: make(map[string]*adapter.URLTestHistory),
+		delayHistory:  make(map[HistoryKey]*adapter.URLTestHistory),
+		latestHistory: make(map[string]HistoryKey),
+		generations:   make(map[string]uint64),
 	}
 }
 
@@ -45,27 +63,107 @@ func (s *HistoryStorage) NotifyUpdated() {
 	s.notifyUpdated()
 }
 
-func (s *HistoryStorage) LoadURLTestHistory(tag string) *adapter.URLTestHistory {
+func (s *HistoryStorage) LoadURLTestHistory(tag, link string) *adapter.URLTestHistory {
 	if s == nil {
 		return nil
 	}
 	s.access.RLock()
 	defer s.access.RUnlock()
-	return s.delayHistory[tag]
+	return s.delayHistory[HistoryKey{OutboundTag: tag, URL: NormalizeURL(link)}]
 }
 
-func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
+// LoadLatestURLTestHistory returns the latest successful history for display only.
+// Target-specific selection must use LoadURLTestHistory instead.
+func (s *HistoryStorage) LoadLatestURLTestHistory(tag string) *adapter.URLTestHistory {
+	if s == nil {
+		return nil
+	}
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.delayHistory[s.latestHistory[tag]]
+}
+
+// OutboundGeneration must be captured before starting an asynchronous probe.
+func (s *HistoryStorage) OutboundGeneration(tag string) uint64 {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.generations[tag]
+}
+
+func (s *HistoryStorage) DeleteURLTestHistory(tag, link string, generation uint64) {
+	key := HistoryKey{OutboundTag: tag, URL: NormalizeURL(link)}
 	s.access.Lock()
-	delete(s.delayHistory, tag)
+	if s.generations[tag] != generation {
+		s.access.Unlock()
+		return
+	}
+	delete(s.delayHistory, key)
+	if latestKey, loaded := s.latestHistory[tag]; loaded && latestKey == key {
+		s.refreshLatestHistory(tag)
+	}
 	s.notifyUpdated()
 	s.access.Unlock()
 }
 
-func (s *HistoryStorage) StoreURLTestHistory(tag string, history *adapter.URLTestHistory) {
+func (s *HistoryStorage) DeleteOutboundURLTestHistory(tag string) {
 	s.access.Lock()
-	s.delayHistory[tag] = history
+	s.generations[tag]++
+	for key := range s.delayHistory {
+		if key.OutboundTag == tag {
+			delete(s.delayHistory, key)
+		}
+	}
+	delete(s.latestHistory, tag)
 	s.notifyUpdated()
 	s.access.Unlock()
+}
+
+func (s *HistoryStorage) StoreURLTestHistory(tag, link string, generation uint64, history *adapter.URLTestHistory) {
+	key := HistoryKey{OutboundTag: tag, URL: NormalizeURL(link)}
+	s.access.Lock()
+	if s.generations[tag] != generation {
+		s.access.Unlock()
+		return
+	}
+	previous := s.delayHistory[key]
+	s.delayHistory[key] = history
+	latestKey, loaded := s.latestHistory[tag]
+	switch {
+	case !loaded:
+		if history != nil {
+			s.latestHistory[tag] = key
+		}
+	case latestKey == key:
+		// Replacing the newest result with an older one may expose another target.
+		if history == nil || history.Time.Before(previous.Time) {
+			s.refreshLatestHistory(tag)
+		}
+	case history != nil && history.Time.After(s.delayHistory[latestKey].Time):
+		s.latestHistory[tag] = key
+	}
+	s.notifyUpdated()
+	s.access.Unlock()
+}
+
+// refreshLatestHistory is called with access locked after invalidating the latest
+// result. Ordinary loads and stores use the index without scanning or copying.
+func (s *HistoryStorage) refreshLatestHistory(tag string) {
+	var latestKey HistoryKey
+	var latest *adapter.URLTestHistory
+	for key, history := range s.delayHistory {
+		if key.OutboundTag != tag || history == nil {
+			continue
+		}
+		if latest == nil || history.Time.After(latest.Time) || history.Time.Equal(latest.Time) && key.URL < latestKey.URL {
+			latestKey = key
+			latest = history
+		}
+	}
+	if latest == nil {
+		delete(s.latestHistory, tag)
+	} else {
+		s.latestHistory[tag] = latestKey
+	}
 }
 
 func (s *HistoryStorage) notifyUpdated() {
@@ -98,9 +196,7 @@ func URLTest(ctx context.Context, link string, detour N.Dialer) (uint16, error) 
 }
 
 func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err error) {
-	if link == "" {
-		link = "https://www.gstatic.com/generate_204"
-	}
+	link = NormalizeURL(link)
 	linkURL, err := url.Parse(link)
 	if err != nil {
 		return
