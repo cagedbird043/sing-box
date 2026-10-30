@@ -12716,6 +12716,9 @@
               "type": "string",
               "x-tag-reference": "outbound"
             },
+            "url": {
+              "type": "string"
+            },
             "interrupt_exist_connections": {
               "type": "boolean"
             }
