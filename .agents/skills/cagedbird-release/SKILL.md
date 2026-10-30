@@ -23,7 +23,8 @@ compatibility: Git、gh、Go、Python 3、Arch makepkg/pacman、SSH sjc-edge；m
 GOTOOLCHAIN=go1.25.5 go test -race ./dns/transport ./option -run Race -count=1
 GOTOOLCHAIN=go1.25.5 go build -trimpath -ldflags "$(cat release/LDFLAGS) -s -w" -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -o /tmp/sing-box-cagedbird ./cmd/sing-box
 sh -n release/config/sing-box-config-pull
-shellcheck release/config/sing-box-config-pull
+sh -n release/config/sing-box-update
+shellcheck release/config/sing-box-config-pull release/config/sing-box-update
 python scripts/ci/test-config-pull.py /tmp/sing-box-cagedbird
 systemd-analyze verify release/config/sing-box-config-pull.service release/config/sing-box-config-pull.timer release/config/sing-box.service
 ```

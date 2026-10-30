@@ -1,0 +1,39 @@
+#!/bin/sh
+# Pull the private config, refresh subscriptions, and show provider status.
+set -eu
+
+notice() { printf '%s\n' "sing-box-update: $*"; }
+fail() { notice "$*" >&2; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || fail "Must run as root; run with sudo: sudo sing-box-update"
+
+sing_box=${SING_BOX_BIN:-/usr/bin/sing-box}
+config_pull=${SING_BOX_CONFIG_PULL:-/usr/lib/sing-box/sing-box-config-pull}
+BOX_API_URL=${BOX_API_URL:-127.0.0.1:9090}
+export BOX_API_URL
+
+notice "Pulling configuration."
+"$config_pull"
+
+notice "Waiting for API service."
+deadline=$(($(date +%s) + 30))
+while :; do
+    [ "$(date +%s)" -lt "$deadline" ] || fail "API service did not become ready within 30 seconds."
+    "$sing_box" api version >/dev/null 2>&1 &
+    api_pid=$!
+    while kill -0 "$api_pid" 2>/dev/null; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            kill -KILL "$api_pid" 2>/dev/null || :
+            wait "$api_pid" 2>/dev/null || :
+            fail "API service did not become ready within 30 seconds."
+        fi
+        sleep 1
+    done
+    if wait "$api_pid"; then
+        break
+    fi
+    sleep 1
+done
+
+notice "Refreshing providers."
+exec "$sing_box" api provider refresh
