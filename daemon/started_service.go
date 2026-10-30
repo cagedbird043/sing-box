@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"os"
 	"runtime"
@@ -624,7 +625,13 @@ func (s *StartedService) readGroups() *Groups {
 			var item GroupItem
 			item.Tag = itemTag
 			item.Type = itemOutbound.Type()
-			if history := historyStorage.LoadURLTestHistory(group.RealTag(itemOutbound, N.NetworkTCP)); history != nil {
+			var history *adapter.URLTestHistory
+			if urlTestGroup, isURLTestGroup := iGroup.(*group.URLTest); isURLTestGroup {
+				history = urlTestGroup.URLTestHistory(itemOutbound, N.NetworkTCP)
+			} else {
+				history = group.LoadURLTestHistory(historyStorage, itemOutbound, N.NetworkTCP)
+			}
+			if history != nil {
 				item.UrlTestTime = history.Time.Unix()
 				item.UrlTestDelay = int32(history.Delay)
 			}
@@ -741,14 +748,22 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 			itOutbound, _ := boxService.outboundManager.Outbound(it)
 			return itOutbound
 		}))
-		go group.URLTestOutbounds(boxService.ctx, boxService.outboundManager, historyStorage, boxService.logFactory.Logger(), outbounds, "", 0, true)
+		go group.URLTestOutbounds(boxService.ctx, boxService.outboundManager, historyStorage, boxService.logFactory.Logger(), outbounds, urltest.DefaultURL, 0, true)
 	} else {
+		realTag := group.RealTag(outbound, N.NetworkTCP)
+		generation := historyStorage.OutboundGeneration(realTag)
 		go func() {
-			t, err := urltest.URLTest(boxService.ctx, "", outbound)
+			t, err := urltest.URLTest(boxService.ctx, urltest.DefaultURL, outbound)
+			current, loaded := boxService.outboundManager.Outbound(realTag)
+			if !loaded || current != outbound {
+				return
+			}
 			if err != nil {
-				historyStorage.DeleteURLTestHistory(outboundTag)
+				if boxService.ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+					historyStorage.DeleteURLTestHistory(realTag, urltest.DefaultURL, generation)
+				}
 			} else {
-				historyStorage.StoreURLTestHistory(outboundTag, &adapter.URLTestHistory{
+				historyStorage.StoreURLTestHistory(realTag, urltest.DefaultURL, generation, &adapter.URLTestHistory{
 					Time:  time.Now(),
 					Delay: t,
 				})
@@ -1186,7 +1201,7 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 					Tag:  ob.Tag(),
 					Type: ob.Type(),
 				}
-				if history := historyStorage.LoadURLTestHistory(group.RealTag(ob, N.NetworkTCP)); history != nil {
+				if history := group.LoadURLTestHistory(historyStorage, ob, N.NetworkTCP); history != nil {
 					item.UrlTestTime = history.Time.Unix()
 					item.UrlTestDelay = int32(history.Delay)
 				}
@@ -1197,7 +1212,7 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 					Tag:  ep.Tag(),
 					Type: ep.Type(),
 				}
-				if history := historyStorage.LoadURLTestHistory(group.RealTag(ep, N.NetworkTCP)); history != nil {
+				if history := group.LoadURLTestHistory(historyStorage, ep, N.NetworkTCP); history != nil {
 					item.UrlTestTime = history.Time.Unix()
 					item.UrlTestDelay = int32(history.Delay)
 				}
