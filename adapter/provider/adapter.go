@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"sync"
 	"time"
@@ -82,7 +83,7 @@ func NewAdapter(ctx context.Context, router adapter.Router, outbound adapter.Out
 		callbackElements: make(map[*list.Element[adapter.ProviderUpdateCallback]]struct{}),
 
 		enabled:  options.Enabled,
-		link:     options.URL,
+		link:     urltest.NormalizeURL(options.URL),
 		timeout:  timeout,
 		interval: interval,
 	}
@@ -196,16 +197,18 @@ func (a *Adapter) UpdateProvider(oldOutbounds []option.Outbound, newOutbounds []
 			return err
 		}
 	}
+	// Every node is rebuilt with its generation, including detour dependents.
+	// Clear all targets before callbacks can observe the replacement nodes.
+	if oldGeneration != nil && a.history != nil {
+		for _, outbound := range oldGeneration.nodes {
+			a.history.DeleteOutboundURLTestHistory(outbound.Tag())
+		}
+	}
 	a.generation = generation
 	outbounds := generation.nodes
 	outboundsByTag := generation.byTag
 	a.stateAccess.Lock()
 	health := make(map[string]adapter.ProviderHealth, len(outbounds))
-	for _, outbound := range outbounds {
-		if item, exists := a.health[outbound.Tag()]; exists {
-			health[outbound.Tag()] = item
-		}
-	}
 	a.stateRevision++
 	a.outbounds = outbounds
 	a.outboundsByTag = outboundsByTag
@@ -266,6 +269,16 @@ func (a *Adapter) HealthCheck(ctx context.Context) (map[string]uint16, error) {
 		return nil, err
 	}
 	defer a.actionAccess.Unlock()
+	if err := a.ctx.Err(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	stopCancel := context.AfterFunc(a.ctx, cancel)
+	defer stopCancel()
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	a.tickerAccess.Lock()
 	if a.ticker != nil {
 		a.ticker.Reset(a.interval)
@@ -273,6 +286,11 @@ func (a *Adapter) HealthCheck(ctx context.Context) (map[string]uint16, error) {
 	a.tickerAccess.Unlock()
 	result := make(map[string]uint16)
 	health := make(map[string]adapter.ProviderHealth)
+	a.stateAccess.RLock()
+	for tag, item := range a.health {
+		health[tag] = item
+	}
+	a.stateAccess.RUnlock()
 	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](10))
 	var resultAccess sync.Mutex
 	checked := make(map[string]bool)
@@ -285,15 +303,19 @@ func (a *Adapter) HealthCheck(ctx context.Context) (map[string]uint16, error) {
 		b.Go(tag, func() (any, error) {
 			checkContext, cancel := context.WithTimeout(ctx, a.timeout)
 			defer cancel()
+			generation := a.history.OutboundGeneration(tag)
 			delay, err := urltest.URLTest(checkContext, a.link, detour)
+			if ctx.Err() != nil || a.ctx.Err() != nil || errors.Is(err, context.Canceled) {
+				return nil, nil
+			}
 			checkedAt := time.Now()
 			item := adapter.ProviderHealth{CheckedAt: checkedAt}
 			if err != nil {
 				a.logger.Debug("outbound ", tag, " unavailable: ", err)
-				a.history.DeleteURLTestHistory(tag)
+				a.history.DeleteURLTestHistory(tag, a.link, generation)
 			} else {
 				a.logger.Debug("outbound ", tag, " available: ", delay, "ms")
-				a.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{Time: checkedAt, Delay: delay})
+				a.history.StoreURLTestHistory(tag, a.link, generation, &adapter.URLTestHistory{Time: checkedAt, Delay: delay})
 				item.Available = true
 				item.Delay = delay
 			}
@@ -307,6 +329,12 @@ func (a *Adapter) HealthCheck(ctx context.Context) (map[string]uint16, error) {
 		})
 	}
 	b.Wait()
+	if err := a.ctx.Err(); err != nil {
+		return result, err
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	a.stateAccess.Lock()
 	a.stateRevision++
 	a.health = health
@@ -377,6 +405,7 @@ func (a *Adapter) Close() error {
 	a.callbackAccess.Unlock()
 	a.callbackWait.Wait()
 	a.stateAccess.Lock()
+	outbounds := a.outbounds
 	a.outbounds = nil
 	a.outboundsByTag = nil
 	a.stateAccess.Unlock()
@@ -390,6 +419,12 @@ func (a *Adapter) Close() error {
 	}
 	if publisher, ok := a.endpoint.(adapter.ProviderEndpointManager); ok {
 		err = E.Errors(err, publisher.PublishProvider(a.providerTag, nil))
+	}
+	// Invalidate after unpublishing, so old snapshots cannot start new writes.
+	if a.history != nil {
+		for _, outbound := range outbounds {
+			a.history.DeleteOutboundURLTestHistory(outbound.Tag())
+		}
 	}
 	return err
 }

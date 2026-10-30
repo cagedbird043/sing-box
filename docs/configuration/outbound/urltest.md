@@ -44,6 +44,10 @@ When `enabled`, prefer the first available member within `max_delay`. If every a
 
 The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
 
+Probe history and automatic selection are scoped to the outbound and the effective test URL. Groups testing the same outbound against different URLs do not overwrite or invalidate each other's results. Empty URLs share the default URL's history. Nested URL-test groups retain their own configured targets.
+
+Provider health checks and manual API tests share results only when their target URL matches. Group member delays use that group's effective target; a plain node's latest successful delay is a display view, not a fallback for target-specific selection. Replacing or removing provider nodes invalidates their history across all targets, and results from retired node generations are ignored.
+
 #### interval
 
 The test interval. `3m` will be used if empty.

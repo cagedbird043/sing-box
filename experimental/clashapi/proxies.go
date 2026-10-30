@@ -2,6 +2,7 @@ package clashapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -70,7 +71,7 @@ func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
 	info.Put("type", clashType)
 	info.Put("name", detour.Tag())
 	info.Put("udp", common.Contains(detour.Network(), N.NetworkUDP))
-	delayHistory := server.urlTestHistory.LoadURLTestHistory(group.RealTag(detour, N.NetworkTCP))
+	delayHistory := group.LoadURLTestHistory(server.urlTestHistory, detour, N.NetworkTCP)
 	if delayHistory != nil {
 		info.Put("history", []*adapter.URLTestHistory{delayHistory})
 	} else {
@@ -219,6 +220,7 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) 
 		if strings.HasPrefix(url, "http://") {
 			url = ""
 		}
+		url = urltest.NormalizeURL(url)
 		timeout, err := strconv.ParseInt(query.Get("timeout"), 10, 16)
 		if err != nil {
 			render.Status(r, http.StatusBadRequest)
@@ -227,16 +229,35 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) 
 		}
 
 		proxy := r.Context().Value(CtxKeyProxy).(adapter.Outbound)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(timeout))
+		for {
+			outboundGroup, isGroup := proxy.(adapter.OutboundGroup)
+			if !isGroup {
+				break
+			}
+			proxy = outboundGroup.Selected(N.NetworkTCP)
+		}
+		if proxy == nil {
+			render.Status(r, http.StatusServiceUnavailable)
+			render.JSON(w, r, newError("An error occurred in the delay test"))
+			return
+		}
+		realTag := proxy.Tag()
+		generation := server.urlTestHistory.OutboundGeneration(realTag)
+		ctx, cancel := context.WithTimeout(r.Context(), time.Millisecond*time.Duration(timeout))
 		defer cancel()
 
 		delay, err := urltest.URLTest(ctx, url, proxy)
 		defer func() {
-			realTag := group.RealTag(proxy, N.NetworkTCP)
+			current, loaded := server.outbound.Outbound(realTag)
+			if !loaded || current != proxy {
+				return
+			}
 			if err != nil {
-				server.urlTestHistory.DeleteURLTestHistory(realTag)
+				if r.Context().Err() == nil && !errors.Is(err, context.Canceled) {
+					server.urlTestHistory.DeleteURLTestHistory(realTag, url, generation)
+				}
 			} else {
-				server.urlTestHistory.StoreURLTestHistory(realTag, &adapter.URLTestHistory{
+				server.urlTestHistory.StoreURLTestHistory(realTag, url, generation, &adapter.URLTestHistory{
 					Time:  time.Now(),
 					Delay: delay,
 				})
