@@ -17,6 +17,7 @@
 - `.github/workflows/cagedbird-*.yml`
 - `scripts/ci/`
 - `release/config/sing-box-config-pull*`
+- `release/config/sing-box-update`
 
 改上游文件时，改动要小、集中，并落在对应的主题提交里。上游 workflow（`build`、`docker`、`lint`、`linux`、`stale`、`test`）已在仓库设置里停用，文件保持原样，不改也不删。
 
@@ -27,6 +28,7 @@
 - 每个主题一个提交：
   - 修改已有主题：`git commit --fixup=<主题提交>`，然后 `git rebase -i --autosquash <基线tag>`。
   - 只有新主题才新开提交。
+- `cmd/sing-box/cmd_api_provider*.go` 是配置与订阅一键更新主题中有意新增的上游路径。
 - 整理补丁栈前后：
   - `git diff <旧HEAD> <新HEAD>` 只能出现有意的改动。
   - 每个提交都要能单独编译，用 `git rebase <基线tag> -x '<下面的构建命令>'` 检查。
