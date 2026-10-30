@@ -82,8 +82,9 @@ commit_if_changed() {
 
 write_homebrew_formula() {
   local formula="$1"
-  local pull_sha
+  local pull_sha update_sha
   pull_sha="$(sha256sum release/config/sing-box-config-pull | cut -d ' ' -f 1)"
+  update_sha="$(sha256sum release/config/sing-box-update | cut -d ' ' -f 1)"
   cat > "${formula}" <<FORMULA
 class SingBoxCagedbird < Formula
   desc "Universal proxy platform with native Clash subscription support"
@@ -121,12 +122,24 @@ class SingBoxCagedbird < Formula
     sha256 "${pull_sha}"
   end
 
+  resource "update" do
+    url "https://raw.githubusercontent.com/${SOURCE_REPO}/${tag}/release/config/sing-box-update"
+    sha256 "${update_sha}"
+  end
+
   def install
     bin.install "sing-box"
     prefix.install "BUILD-INFO.txt"
     pkgshare.install "LICENSE"
     resource("config-pull").stage { libexec.install Dir["*"].fetch(0) => "sing-box-config-pull" }
     chmod 0755, libexec/"sing-box-config-pull"
+    resource("update").stage { libexec.install Dir["*"].fetch(0) => "sing-box-update" }
+    chmod 0755, libexec/"sing-box-update"
+    (bin/"sing-box-update").write <<~SH
+      #!/bin/sh
+      exec env SING_BOX_CONFIG_DIR="\${SING_BOX_CONFIG_DIR:-#{etc}/sing-box}" SING_BOX_BIN="\${SING_BOX_BIN:-#{opt_bin}/sing-box}" SING_BOX_CONFIG_PULL="\${SING_BOX_CONFIG_PULL:-#{opt_libexec}/sing-box-config-pull}" "#{opt_libexec}/sing-box-update" "\$@"
+    SH
+    chmod 0755, bin/"sing-box-update"
     (etc/"sing-box").mkpath
     (var/"lib/sing-box").mkpath
     (pkgshare/"cn.cagedbird.sing-box-config-pull.plist").write <<~PLIST
