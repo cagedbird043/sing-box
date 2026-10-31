@@ -48,6 +48,8 @@ Probe history and automatic selection are scoped to the outbound and the effecti
 
 Provider health checks and manual API tests share results only when their target URL matches. A manual gRPC `URLTest` of a node or a non-URL-test group probes each node at its display target (the containing selector's `url`, or the default URL when tested directly) and at the target of every URL-test group containing it, then lets those groups re-select. Group member delays show only results at that group's effective target; a plain node shown outside any group displays its default-URL result and never borrows another target's latest result. Replacing or removing provider nodes invalidates their history across all targets, and results from retired node generations are ignored.
 
+When the current selection has no test result, the group selects a usable member as soon as its result is observed during testing, using the existing selection policy. It selects again from the complete results at the end of the round. Nested URL-test groups select early independently; the parent's selection of nested members is still determined at the end of its round.
+
 #### interval
 
 The test interval. `3m` will be used if empty.
