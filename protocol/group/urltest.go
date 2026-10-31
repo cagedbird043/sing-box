@@ -487,10 +487,52 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 	defer g.testAccess.Unlock()
 	g.nodesAccess.RLock()
 	nodes := slices.Clone(g.outbounds)
+	pendingTCP := g.selectionNeedsHistoryLocked(N.NetworkTCP)
+	pendingUDP := g.selectionNeedsHistoryLocked(N.NetworkUDP)
 	g.nodesAccess.RUnlock()
-	result := URLTestOutbounds(ctx, g.outbound, g.history, g.logger, nodes, g.link, g.interval, force)
+	var onHistory func()
+	if pendingTCP || pendingUDP {
+		var pendingAccess sync.Mutex
+		onHistory = func() {
+			pendingAccess.Lock()
+			defer pendingAccess.Unlock()
+			if !pendingTCP && !pendingUDP {
+				return
+			}
+			g.updateAccess.Lock()
+			defer g.updateAccess.Unlock()
+			g.nodesAccess.Lock()
+			defer g.nodesAccess.Unlock()
+			var updated, selected bool
+			if pendingTCP {
+				updated, selected = g.updateSelectionLocked(N.NetworkTCP, true)
+				pendingTCP = !selected
+			}
+			if pendingUDP {
+				udpUpdated, udpSelected := g.updateSelectionLocked(N.NetworkUDP, true)
+				pendingUDP = !udpSelected
+				updated = updated || udpUpdated
+				selected = selected || udpSelected
+			}
+			g.notifySelectionLocked(updated, selected)
+		}
+		onHistory()
+	}
+	result := urlTestOutbounds(ctx, g.outbound, g.history, g.logger, nodes, g.link, g.interval, force, onHistory)
 	g.performUpdateCheck()
 	return result, nil
+}
+
+// selectionNeedsHistoryLocked checks the cached selection, not another member's history.
+func (g *URLTestGroup) selectionNeedsHistoryLocked(network string) bool {
+	selected := g.selectedOutboundTCP
+	if network == N.NetworkUDP {
+		selected = g.selectedOutboundUDP
+	}
+	if selected == nil {
+		selected, _ = g.selectLocked(network)
+	}
+	return g.loadHistory(selected, network) == nil
 }
 
 type urlTestResult struct {
@@ -499,15 +541,16 @@ type urlTestResult struct {
 }
 
 type urlTestBatch struct {
-	ctx      context.Context
-	outbound adapter.OutboundManager
-	history  *urltest.HistoryStorage
-	logger   log.Logger
-	batch    *batch.Batch[any]
-	checked  map[string]bool
-	groups   []urlTestBatchGroup
-	access   sync.Mutex
-	result   map[string]uint16
+	ctx       context.Context
+	outbound  adapter.OutboundManager
+	history   *urltest.HistoryStorage
+	logger    log.Logger
+	batch     *batch.Batch[any]
+	checked   map[string]bool
+	groups    []urlTestBatchGroup
+	access    sync.Mutex
+	result    map[string]uint16
+	onHistory func()
 }
 
 type urlTestBatchGroup struct {
@@ -516,15 +559,20 @@ type urlTestBatchGroup struct {
 }
 
 func URLTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force bool) map[string]uint16 {
+	return urlTestOutbounds(ctx, outboundManager, history, logger, outbounds, link, interval, force, nil)
+}
+
+func urlTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force bool, onHistory func()) map[string]uint16 {
 	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](10))
 	testBatch := &urlTestBatch{
-		ctx:      ctx,
-		outbound: outboundManager,
-		history:  history,
-		logger:   logger,
-		batch:    b,
-		checked:  make(map[string]bool),
-		result:   make(map[string]uint16),
+		ctx:       ctx,
+		outbound:  outboundManager,
+		history:   history,
+		logger:    logger,
+		batch:     b,
+		checked:   make(map[string]bool),
+		result:    make(map[string]uint16),
+		onHistory: onHistory,
 	}
 	testBatch.test(outbounds, link, interval, force)
 	b.Wait()
@@ -573,6 +621,11 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 				b.result[tag] = history.Delay
 				b.access.Unlock()
 				b.checked[tag] = true
+				if b.onHistory != nil && b.ctx.Err() == nil {
+					if current, loaded := b.outbound.Outbound(tag); loaded && current == detour {
+						b.onHistory()
+					}
+				}
 				continue
 			}
 			b.checked[tag] = true
@@ -610,6 +663,9 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 					b.access.Lock()
 					b.result[tag] = testResult.delay
 					b.access.Unlock()
+					if b.onHistory != nil && b.ctx.Err() == nil {
+						b.onHistory()
+					}
 				}
 				return nil, nil
 			})
@@ -622,24 +678,31 @@ func (g *URLTestGroup) performUpdateCheck() {
 	defer g.updateAccess.Unlock()
 	g.nodesAccess.Lock()
 	defer g.nodesAccess.Unlock()
-	var (
-		updated  bool
-		selected bool
-	)
-	if outbound, exists := g.selectLocked(N.NetworkTCP); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
-		if g.selectedOutboundTCP != nil {
-			updated = true
-		}
-		g.selectedOutboundTCP = outbound
-		selected = true
+	updatedTCP, selectedTCP := g.updateSelectionLocked(N.NetworkTCP, false)
+	updatedUDP, selectedUDP := g.updateSelectionLocked(N.NetworkUDP, false)
+	g.notifySelectionLocked(updatedTCP || updatedUDP, selectedTCP || selectedUDP)
+}
+
+// updateSelectionLocked confirms a usable selection when requireHistory is true,
+// and otherwise preserves the round-end fallback behavior.
+func (g *URLTestGroup) updateSelectionLocked(network string, requireHistory bool) (updated, selected bool) {
+	outbound, exists := g.selectLocked(network)
+	if outbound == nil || (requireHistory && !exists) {
+		return false, false
 	}
-	if outbound, exists := g.selectLocked(N.NetworkUDP); outbound != nil && (g.selectedOutboundUDP == nil || (exists && outbound != g.selectedOutboundUDP)) {
-		if g.selectedOutboundUDP != nil {
-			updated = true
-		}
-		g.selectedOutboundUDP = outbound
-		selected = true
+	current := &g.selectedOutboundTCP
+	if network == N.NetworkUDP {
+		current = &g.selectedOutboundUDP
 	}
+	if *current == nil || (exists && outbound != *current) {
+		updated = *current != nil
+		*current = outbound
+		return updated, true
+	}
+	return false, requireHistory
+}
+
+func (g *URLTestGroup) notifySelectionLocked(updated, selected bool) {
 	if updated {
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
 	}
