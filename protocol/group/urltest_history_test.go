@@ -143,7 +143,9 @@ func TestURLTestInvalidationChecksTargetAndLeafIdentity(t *testing.T) {
 	node := &historyTestOutbound{tag: "node"}
 	manager := &historyTestManager{nodes: map[string]adapter.Outbound{"node": node}}
 	const first, second = "https://first.example/check", "https://second.example/check"
-	group := &URLTest{outbound: manager, group: &URLTestGroup{history: history, link: first, selectedOutboundTCP: node, selectedOutboundUDP: node}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	group := &URLTest{outbound: manager, group: &URLTestGroup{ctx: ctx, outbound: manager, history: history, link: first, selectedOutboundTCP: node, selectedOutboundUDP: node}}
 	storeHistory(history, node.Tag(), first, 100)
 	storeHistory(history, node.Tag(), second, 200)
 	group.InvalidateURLTestHistory(node, N.NetworkUDP)

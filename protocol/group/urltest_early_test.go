@@ -349,7 +349,7 @@ func TestURLTestFreshHistoryCallsObserver(t *testing.T) {
 	storeHistory(r.history, node.Tag(), r.group.link, 10)
 	observed := false
 	result := urlTestOutbounds(context.Background(), r.manager, r.history, r.group.logger,
-		[]adapter.Outbound{node}, r.group.link, time.Hour, false, func() { observed = true })
+		[]adapter.Outbound{node}, r.group.link, time.Hour, false, false, func() { observed = true })
 	if !observed || result[node.Tag()] != 10 {
 		t.Fatal("fresh result was not delivered to the history observer")
 	}
