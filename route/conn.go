@@ -309,7 +309,10 @@ func (m *ConnectionManager) deleteURLTestHistory(chain []adapter.Outbound, netwo
 }
 
 func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) {
-	_, err := bufio.CopyWithIncreateBuffer(destination, source, bufio.DefaultIncreaseBufferAfter, bufio.DefaultBatchSize)
+	n, err := bufio.CopyWithIncreateBuffer(destination, source, bufio.DefaultIncreaseBufferAfter, bufio.DefaultBatchSize)
+	if direction && n == 0 && err != nil {
+		m.requestURLTestRecheck(ctx, N.NetworkTCP, err)
+	}
 	if err != nil {
 		common.Close(source, destination)
 	} else {
@@ -392,6 +395,9 @@ func (m *ConnectionManager) kickWriteHandshake(ctx context.Context, source net.C
 	}
 	if !wrotePayload && (E.IsMulti(err, os.ErrInvalid, context.DeadlineExceeded, io.EOF) || E.IsTimeout(err)) {
 		return false
+	}
+	if !direction {
+		m.requestURLTestRecheck(ctx, N.NetworkTCP, err)
 	}
 	if !done.Swap(true) {
 		if onClose != nil {

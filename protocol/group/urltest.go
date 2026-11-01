@@ -219,6 +219,7 @@ func (s *URLTest) InvalidateURLTestHistory(leaf adapter.Outbound, network string
 		return
 	}
 	s.group.history.DeleteURLTestHistory(leaf.Tag(), link, generation)
+	s.group.requestRecheck(leaf, network)
 }
 
 func (s *URLTest) CheckOutbounds() {
@@ -309,6 +310,10 @@ type URLTestGroup struct {
 	lastActive                   common.TypedValue[time.Time]
 	nodesAccess                  sync.RWMutex
 	testAccess                   sync.Mutex
+	recheckAccess                sync.Mutex
+	recheckRunning               bool
+	recheckLast                  time.Time
+	recheckNow                   func() time.Time
 	fallback                     option.URLTestFallbackOptions
 }
 
@@ -499,15 +504,20 @@ func (g *URLTestGroup) URLTest(ctx context.Context) (map[string]uint16, error) {
 }
 
 func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint16, error) {
+	result, _, err := g.tryURLTest(ctx, force, false)
+	return result, err
+}
+
+func (g *URLTestGroup) tryURLTest(ctx context.Context, force, skipInitialSelect bool) (map[string]uint16, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if g.checking.Swap(true) {
-		return make(map[string]uint16), nil
+		return make(map[string]uint16), false, nil
 	}
-	defer g.checking.Store(false)
 	g.testAccess.Lock()
 	defer g.testAccess.Unlock()
+	defer g.checking.Store(false)
 	g.nodesAccess.RLock()
 	nodes := slices.Clone(g.outbounds)
 	pendingTCP := g.selectionNeedsHistoryLocked(N.NetworkTCP)
@@ -539,11 +549,13 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 			}
 			g.notifySelectionLocked(updated, selected)
 		}
-		onHistory()
+		if !skipInitialSelect {
+			onHistory()
+		}
 	}
-	result := urlTestOutbounds(ctx, g.outbound, g.history, g.logger, nodes, g.link, g.interval, force, onHistory)
+	result := urlTestOutbounds(ctx, g.outbound, g.history, g.logger, nodes, g.link, g.interval, force, skipInitialSelect, onHistory)
 	g.performUpdateCheck()
-	return result, nil
+	return result, true, nil
 }
 
 // selectionNeedsHistoryLocked checks the cached selection, not another member's history.
@@ -564,16 +576,17 @@ type urlTestResult struct {
 }
 
 type urlTestBatch struct {
-	ctx       context.Context
-	outbound  adapter.OutboundManager
-	history   *urltest.HistoryStorage
-	logger    log.Logger
-	batch     *batch.Batch[any]
-	checked   map[string]bool
-	groups    []urlTestBatchGroup
-	access    sync.Mutex
-	result    map[string]uint16
-	onHistory func()
+	ctx               context.Context
+	outbound          adapter.OutboundManager
+	history           *urltest.HistoryStorage
+	logger            log.Logger
+	batch             *batch.Batch[any]
+	checked           map[string]bool
+	groups            []urlTestBatchGroup
+	access            sync.Mutex
+	result            map[string]uint16
+	onHistory         func()
+	skipInitialSelect bool
 }
 
 type urlTestBatchGroup struct {
@@ -582,20 +595,21 @@ type urlTestBatchGroup struct {
 }
 
 func URLTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force bool) map[string]uint16 {
-	return urlTestOutbounds(ctx, outboundManager, history, logger, outbounds, link, interval, force, nil)
+	return urlTestOutbounds(ctx, outboundManager, history, logger, outbounds, link, interval, force, false, nil)
 }
 
-func urlTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force bool, onHistory func()) map[string]uint16 {
+func urlTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force, skipInitialSelect bool, onHistory func()) map[string]uint16 {
 	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](10))
 	testBatch := &urlTestBatch{
-		ctx:       ctx,
-		outbound:  outboundManager,
-		history:   history,
-		logger:    logger,
-		batch:     b,
-		checked:   make(map[string]bool),
-		result:    make(map[string]uint16),
-		onHistory: onHistory,
+		ctx:               ctx,
+		outbound:          outboundManager,
+		history:           history,
+		logger:            logger,
+		batch:             b,
+		checked:           make(map[string]bool),
+		result:            make(map[string]uint16),
+		onHistory:         onHistory,
+		skipInitialSelect: skipInitialSelect,
 	}
 	testBatch.test(outbounds, link, interval, force)
 	b.Wait()
@@ -624,7 +638,7 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 			b.checked[tag] = true
 			b.groups = append(b.groups, urlTestBatchGroup{nested, link})
 			b.batch.Go(tag, func() (any, error) {
-				nestedResult, _ := nested.group.urlTest(b.ctx, force)
+				nestedResult, _, _ := nested.group.tryURLTest(b.ctx, force, b.skipInitialSelect)
 				b.access.Lock()
 				maps.Copy(b.result, nestedResult)
 				b.access.Unlock()
