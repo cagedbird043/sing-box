@@ -36,6 +36,7 @@ func RegisterProvider(registry *provider.Registry) {
 }
 
 var _ adapter.Provider = (*ProviderRemote)(nil)
+var _ adapter.ProviderSubscriptionSource = (*ProviderRemote)(nil)
 
 type ProviderRemote struct {
 	provider.Adapter
@@ -154,6 +155,10 @@ func (s *ProviderRemote) Update() error {
 	s.tickerAccess.Unlock()
 	ctx := interrupt.ContextWithIsProviderConnection(s.ctx)
 	return s.fetch(ctx, false)
+}
+
+func (s *ProviderRemote) SubscriptionURL() string {
+	return s.url
 }
 
 func (s *ProviderRemote) SubscriptionInfo() adapter.SubscriptionInfo {

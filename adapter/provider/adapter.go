@@ -439,10 +439,10 @@ func (a *Adapter) Close() error {
 		a.generation = nil
 	}
 	if publisher, ok := a.outbound.(adapter.ProviderOutboundManager); ok {
-		err = E.Errors(err, publisher.PublishProvider(a.providerTag, nil))
+		err = E.Errors(err, publisher.PublishProvider(a.providerTag, nil, nil))
 	}
 	if publisher, ok := a.endpoint.(adapter.ProviderEndpointManager); ok {
-		err = E.Errors(err, publisher.PublishProvider(a.providerTag, nil))
+		err = E.Errors(err, publisher.PublishProvider(a.providerTag, nil, nil))
 	}
 	// Invalidate after unpublishing, so old snapshots cannot start new writes.
 	if a.history != nil {

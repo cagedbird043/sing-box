@@ -52,7 +52,8 @@ message Provider {
   ProviderCapabilities capabilities = 4;
   SubscriptionInfo subscription = 5;
   repeated ProviderNode nodes = 6;
-  reserved 7 to 31;
+  string url = 7;
+  reserved 8 to 31;
 }
 
 message ProviderCapabilities {

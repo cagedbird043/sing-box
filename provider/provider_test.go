@@ -148,6 +148,74 @@ func TestRemoteProviderRefreshAndOfflineCache(t *testing.T) {
 	}
 }
 
+func TestProviderNodeFingerprint(t *testing.T) {
+	var content atomic.Value
+	content.Store(`proxies:
+  - {name: a, type: ss, server: 127.0.0.1, port: 10001, cipher: aes-128-gcm, password: same}
+  - {name: b, type: ss, server: 127.0.0.1, port: 10002, cipher: aes-128-gcm, password: same}
+`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(content.Load().(string)))
+	}))
+	defer server.Close()
+	config, err := json.Marshal(map[string]any{
+		"log":       map[string]any{"disabled": true},
+		"providers": []any{map[string]any{"type": "remote", "tag": "sub", "url": server.URL, "http_client": map[string]any{"version": 1}}},
+		"outbounds": []any{
+			map[string]any{"type": "shadowsocks", "tag": "static", "server": "127.0.0.1", "server_port": 10001, "method": "aes-128-gcm", "password": "same"},
+			map[string]any{"type": "selector", "tag": "select", "providers": []string{"sub"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := service.ContextWithDefaultRegistry(include.Context(context.Background()))
+	options, err := json.UnmarshalExtendedContext[option.Options](ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := box.New(box.Options{Options: options, Context: ctx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	if err = instance.Start(); err != nil {
+		t.Fatal(err)
+	}
+	fingerprinter := instance.Outbound().(adapter.OutboundFingerprinter)
+	fingerprint := func(tag string) string {
+		t.Helper()
+		value, found := fingerprinter.OutboundFingerprint(tag)
+		if !found || value == "" {
+			t.Fatalf("fingerprint missing for %s", tag)
+		}
+		return value
+	}
+	a, b := fingerprint("sub/a"), fingerprint("sub/b")
+	if a == b {
+		t.Fatal("nodes with different ports share a fingerprint")
+	}
+	// Static outbounds get fingerprints too; the helper fails when missing.
+	fingerprint("static")
+	content.Store(`proxies:
+  - {name: renamed, type: ss, server: 127.0.0.1, port: 10001, cipher: aes-128-gcm, password: same}
+  - {name: b, type: ss, server: 127.0.0.1, port: 10002, cipher: aes-128-gcm, password: changed}
+`)
+	provider, _ := service.FromContext[adapter.ProviderManager](ctx).Get("sub")
+	if err = provider.(adapter.ProviderUpdater).Update(); err != nil {
+		t.Fatal(err)
+	}
+	if fingerprint("sub/renamed") != a {
+		t.Fatal("renaming a node changed its fingerprint")
+	}
+	if fingerprint("sub/b") == b {
+		t.Fatal("changing a node's password kept its fingerprint")
+	}
+	if _, found := fingerprinter.OutboundFingerprint("sub/a"); found {
+		t.Fatal("removed node still has a fingerprint")
+	}
+}
+
 func TestRemoteProviderUnusableCache(t *testing.T) {
 	const valid = `{"outbounds":[{"type":"shadowsocks","tag":"fresh","server":"127.0.0.1","server_port":10001,"method":"aes-128-gcm","password":"test"}]}`
 	const missingResolver = `{"outbounds":[{"type":"shadowsocks","tag":"stale","server":"proxy.example","server_port":10001,"method":"aes-128-gcm","password":"test","domain_resolver":"dns-edgex"}]}`

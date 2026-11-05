@@ -49,6 +49,11 @@ type ProviderSubscriptionInfo interface {
 	SubscriptionInfo() SubscriptionInfo
 }
 
+// ProviderSubscriptionSource exposes only the configured remote subscription URL.
+type ProviderSubscriptionSource interface {
+	SubscriptionURL() string
+}
+
 type ProviderRegistry interface {
 	option.ProviderOptionsRegistry
 	CreateProvider(ctx context.Context, router Router, logFactory log.Factory, tag string, providerType string, options any) (Provider, error)

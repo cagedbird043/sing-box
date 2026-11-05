@@ -59,13 +59,15 @@ func (m *startupHTTPManager) DefaultTransport() adapter.HTTPTransport { return m
 type startupOutboundManager struct{ adapter.OutboundManager }
 
 func (*startupOutboundManager) Outbound(string) (adapter.Outbound, bool) { return nil, false }
-func (*startupOutboundManager) PublishProvider(string, []adapter.Outbound) error {
+func (*startupOutboundManager) PublishProvider(string, []adapter.Outbound, map[string]string) error {
 	return nil
 }
 
 type startupEndpointManager struct{ adapter.EndpointManager }
 
-func (*startupEndpointManager) PublishProvider(string, []adapter.Endpoint) error { return nil }
+func (*startupEndpointManager) PublishProvider(string, []adapter.Endpoint, map[string]string) error {
+	return nil
+}
 
 type startupNodeOptions struct{}
 

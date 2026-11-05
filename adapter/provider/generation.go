@@ -12,11 +12,12 @@ import (
 // A generation owns all scopes in one subscription. Rebuilding a generation
 // also rebuilds detour dependents, so none retain a node from a retired scope.
 type nodeGeneration struct {
-	scope     *adapter.Scope
-	nodes     []adapter.Outbound
-	byTag     map[string]adapter.Outbound
-	endpoints []adapter.Endpoint
-	outbound  adapter.OutboundManager
+	scope        *adapter.Scope
+	nodes        []adapter.Outbound
+	byTag        map[string]adapter.Outbound
+	fingerprints map[string]string
+	endpoints    []adapter.Endpoint
+	outbound     adapter.OutboundManager
 }
 
 type generationOutbounds struct {
@@ -36,7 +37,7 @@ func (m *generationOutbounds) Outbound(tag string) (adapter.Outbound, bool) {
 }
 
 func (a *Adapter) createGeneration(outbounds []option.Outbound, endpoints []option.Endpoint) (_ *nodeGeneration, err error) {
-	g := &nodeGeneration{scope: adapter.NewScope(a.ctx, a.logger), byTag: make(map[string]adapter.Outbound)}
+	g := &nodeGeneration{scope: adapter.NewScope(a.ctx, a.logger), byTag: make(map[string]adapter.Outbound), fingerprints: make(map[string]string)}
 	defer func() {
 		if err != nil {
 			g.scope.Close()
@@ -61,6 +62,7 @@ func (a *Adapter) createGeneration(outbounds []option.Outbound, endpoints []opti
 		}
 		g.nodes = append(g.nodes, node)
 		g.byTag[tag] = node
+		g.fingerprints[tag] = adapter.OutboundFingerprint(options.Type, options.Options)
 	}
 	tags = a.resolveEndpointTags(endpoints)
 	for i, options := range endpoints {
@@ -79,6 +81,7 @@ func (a *Adapter) createGeneration(outbounds []option.Outbound, endpoints []opti
 		}
 		g.nodes = append(g.nodes, node)
 		g.byTag[tag] = node
+		g.fingerprints[tag] = adapter.OutboundFingerprint(options.Type, options.Options)
 		g.endpoints = append(g.endpoints, node)
 	}
 	return g, nil
@@ -134,15 +137,17 @@ func (a *Adapter) publishGeneration(g *nodeGeneration) error {
 	if !ok {
 		return E.New("endpoint manager does not support provider namespaces")
 	}
-	if err := endpointPublisher.PublishProvider(a.providerTag, g.endpoints); err != nil {
+	if err := endpointPublisher.PublishProvider(a.providerTag, g.endpoints, g.fingerprints); err != nil {
 		return err
 	}
-	if err := outboundPublisher.PublishProvider(a.providerTag, outbounds); err != nil {
+	if err := outboundPublisher.PublishProvider(a.providerTag, outbounds, g.fingerprints); err != nil {
 		var previous []adapter.Endpoint
+		var previousFingerprints map[string]string
 		if a.generation != nil {
 			previous = a.generation.endpoints
+			previousFingerprints = a.generation.fingerprints
 		}
-		_ = endpointPublisher.PublishProvider(a.providerTag, previous)
+		_ = endpointPublisher.PublishProvider(a.providerTag, previous, previousFingerprints)
 		return err
 	}
 	return nil

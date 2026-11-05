@@ -10,7 +10,10 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-var _ adapter.EndpointManager = (*Manager)(nil)
+var (
+	_ adapter.EndpointManager       = (*Manager)(nil)
+	_ adapter.OutboundFingerprinter = (*Manager)(nil)
+)
 
 type Manager struct {
 	registry          adapter.EndpointRegistry
@@ -19,6 +22,7 @@ type Manager struct {
 	endpoints         []adapter.Endpoint
 	endpointByTag     map[string]adapter.Endpoint
 	providerEndpoints map[string][]adapter.Endpoint
+	fingerprintByTag  map[string]string
 }
 
 func NewManager(registry adapter.EndpointRegistry) *Manager {
@@ -26,6 +30,7 @@ func NewManager(registry adapter.EndpointRegistry) *Manager {
 		registry:          registry,
 		endpointByTag:     make(map[string]adapter.Endpoint),
 		providerEndpoints: make(map[string][]adapter.Endpoint),
+		fingerprintByTag:  make(map[string]string),
 	}
 }
 
@@ -69,6 +74,13 @@ func (m *Manager) Get(tag string) (adapter.Endpoint, bool) {
 	return endpoint, found
 }
 
+func (m *Manager) OutboundFingerprint(tag string) (string, bool) {
+	m.access.Lock()
+	defer m.access.Unlock()
+	fingerprint, found := m.fingerprintByTag[tag]
+	return fingerprint, found
+}
+
 func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
 	endpoint, err := m.registry.Create(ctx, router, logger, tag, outboundType, options)
 	if err != nil {
@@ -82,10 +94,13 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointByTag[tag] = endpoint
+	if fingerprint := adapter.OutboundFingerprint(outboundType, options); fingerprint != "" {
+		m.fingerprintByTag[tag] = fingerprint
+	}
 	return nil
 }
 
-func (m *Manager) PublishProvider(namespace string, nodes []adapter.Endpoint) error {
+func (m *Manager) PublishProvider(namespace string, nodes []adapter.Endpoint, fingerprints map[string]string) error {
 	m.access.Lock()
 	defer m.access.Unlock()
 	prefix := namespace + "/"
@@ -107,9 +122,13 @@ func (m *Manager) PublishProvider(namespace string, nodes []adapter.Endpoint) er
 	}
 	for _, node := range old {
 		delete(m.endpointByTag, node.Tag())
+		delete(m.fingerprintByTag, node.Tag())
 	}
 	for _, node := range nodes {
 		m.endpointByTag[node.Tag()] = node
+		if fingerprint := fingerprints[node.Tag()]; fingerprint != "" {
+			m.fingerprintByTag[node.Tag()] = fingerprint
+		}
 	}
 	if len(nodes) == 0 {
 		delete(m.providerEndpoints, namespace)
