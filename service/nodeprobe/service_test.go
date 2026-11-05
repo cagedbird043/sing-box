@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,8 +20,9 @@ import (
 // node dials every destination to one test server, standing in for a proxy
 // whose exit behaves like that server.
 type node struct {
-	tag  string
-	addr string
+	tag   string
+	addr  string
+	dials atomic.Int32
 }
 
 func (n *node) Type() string           { return "test" }
@@ -29,6 +31,7 @@ func (n *node) Network() []string      { return []string{N.NetworkTCP} }
 func (n *node) Dependencies() []string { return nil }
 
 func (n *node) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	n.dials.Add(1)
 	if n.addr == "" {
 		return nil, net.ErrClosed
 	}
@@ -134,7 +137,7 @@ func TestCheckSwitchesAlongPoolPastJunk(t *testing.T) {
 		"stale":   {ok: true, latency: 2 * time.Millisecond},
 		"good":    {ok: true, latency: 3 * time.Millisecond},
 	}
-	s.checkDownloadGroup(context.Background(), &Handle{service: s, group: g}, make(map[string]bool))
+	s.checkDownloadGroup(context.Background(), &Handle{service: s, group: g}, make(map[string]bool), false)
 	if g.current != good {
 		t.Fatalf("selected %s, want good", g.current.Tag())
 	}
@@ -153,7 +156,7 @@ func TestCheckKeepsSelectionWhenLocalNetworkIsDown(t *testing.T) {
 	good := &node{tag: "good", addr: server(t, 20*time.Millisecond, 0)}
 	g := &group{candidates: []adapter.Outbound{current, good}, current: current}
 	s.results = map[string]result{"current": {ok: true}, "good": {ok: true}}
-	s.checkDownloadGroup(context.Background(), &Handle{service: s, group: g}, make(map[string]bool))
+	s.checkDownloadGroup(context.Background(), &Handle{service: s, group: g}, make(map[string]bool), false)
 	if g.current != current || !s.results["current"].ok {
 		t.Fatal("selection judged while the domestic check failed")
 	}
@@ -210,5 +213,34 @@ func TestRequestGroupPrefersOrder(t *testing.T) {
 	s.checkRequestGroup(context.Background(), handle, false)
 	if g.current != proxy {
 		t.Fatalf("selected %s after direct broke, want proxy", g.current.Tag())
+	}
+}
+
+func TestTriggeredCheckLeavesHungNodeAtOnce(t *testing.T) {
+	t.Parallel()
+	healthy := server(t, 20*time.Millisecond, 0)
+	s := newTestService(&node{addr: healthy})
+	s.timeout = 5 * time.Second
+	// Longer than the triggered limit, shorter than the scheduled one.
+	hung := &node{tag: "hung", addr: server(t, 3*time.Second, 0)}
+	good := &node{tag: "good", addr: healthy}
+	first := &group{candidates: []adapter.Outbound{hung, good}, current: hung}
+	second := &group{candidates: []adapter.Outbound{hung, good}, current: hung}
+	other := &group{candidates: []adapter.Outbound{hung, good}, current: good}
+	s.groups = []*Handle{{service: s, group: first}, {service: s, group: second}, {service: s, group: other}}
+	s.results = map[string]result{"hung": {ok: true, latency: time.Millisecond}, "good": {ok: true, latency: 2 * time.Millisecond}}
+	start := time.Now()
+	s.check(context.Background(), s.sharingSelection(s.groups[0]), "test", true)
+	if elapsed := time.Since(start); elapsed > triggeredTimeout+time.Second {
+		t.Fatalf("leaving the hung node took %s", elapsed)
+	}
+	if first.current != good || second.current != good {
+		t.Fatal("a group on the hung node kept it")
+	}
+	if hung.dials.Load() != 1 {
+		t.Fatalf("hung node tested %d times, want once for both groups", hung.dials.Load())
+	}
+	if len(other.switches) != 0 {
+		t.Fatal("a group on another node was switched")
 	}
 }

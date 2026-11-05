@@ -34,6 +34,8 @@ const (
 	screenConcurrency = 8
 	// A failing connection triggers a check of its group at most this often.
 	passiveCooldown = 15 * time.Second
+	// A check triggered by a failing connection gives the selection this long.
+	triggeredTimeout = 2 * time.Second
 	// Interface events arrive in bursts; screen once they settle.
 	networkSettle = 2 * time.Second
 	// The domestic verdict is reused for this long within one burst of work.
@@ -204,6 +206,16 @@ func (s *Service) paused() bool {
 
 func (s *Service) loop(ctx context.Context) {
 	s.screen(ctx, false, "startup")
+	// Members settling during startup (providers loading) queue triggers that
+	// the startup screening already answered.
+	for drained := false; !drained; {
+		select {
+		case handle := <-s.triggers:
+			handle.pending.Store(false)
+		default:
+			drained = true
+		}
+	}
 	screenTicker := time.NewTicker(s.screenInterval)
 	defer screenTicker.Stop()
 	checkTicker := time.NewTicker(s.checkInterval)
@@ -224,7 +236,7 @@ func (s *Service) loop(ctx context.Context) {
 			if len(s.results) == 0 {
 				s.screen(ctx, false, "retry")
 			} else {
-				s.check(ctx, s.handles(), "interval")
+				s.check(ctx, s.handles(), "interval", false)
 			}
 		case <-s.networkChanged:
 			select {
@@ -242,7 +254,7 @@ func (s *Service) loop(ctx context.Context) {
 		case handle := <-s.triggers:
 			handle.pending.Store(false)
 			if time.Since(handle.lastCheck) >= passiveCooldown && !s.paused() {
-				s.check(ctx, []*Handle{handle}, "triggered")
+				s.check(ctx, s.sharingSelection(handle), "triggered", true)
 			}
 		}
 	}
@@ -252,8 +264,8 @@ func (s *Service) target() string {
 	return s.targets[s.round%len(s.targets)]
 }
 
-func (s *Service) download(ctx context.Context, outbound adapter.Outbound) sample {
-	return fetch(ctx, outbound, s.target(), s.downloadBytes, s.timeout)
+func (s *Service) download(ctx context.Context, outbound adapter.Outbound, timeout time.Duration) sample {
+	return fetch(ctx, outbound, s.target(), s.downloadBytes, timeout)
 }
 
 // domesticOK tells a broken local network apart from broken nodes: when the
@@ -306,7 +318,7 @@ func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
 		go func() {
 			defer waitGroup.Done()
 			defer func() { <-semaphore }()
-			measured := s.download(ctx, node)
+			measured := s.download(ctx, node, s.timeout)
 			s.logSample(node, measured)
 			access.Lock()
 			defer access.Unlock()
@@ -380,7 +392,7 @@ func (s *Service) pool(handle *Handle, exclude map[string]bool) []adapter.Outbou
 
 // check verifies each group's selection and moves a disqualified group along
 // its pool. Within one call a node shared by several groups is tested once.
-func (s *Service) check(ctx context.Context, handles []*Handle, reason string) {
+func (s *Service) check(ctx context.Context, handles []*Handle, reason string, triggered bool) {
 	verdicts := make(map[string]bool)
 	for _, handle := range handles {
 		if ctx.Err() != nil {
@@ -391,18 +403,34 @@ func (s *Service) check(ctx context.Context, handles []*Handle, reason string) {
 		if handle.options.URL != "" {
 			s.checkRequestGroup(ctx, handle, false)
 		} else {
-			s.checkDownloadGroup(ctx, handle, verdicts)
+			s.checkDownloadGroup(ctx, handle, verdicts, triggered)
 		}
 	}
 }
 
+// sharingSelection returns the triggered group followed by every other download
+// group on the same member: a node that broke for one of them broke for all.
+func (s *Service) sharingSelection(handle *Handle) []*Handle {
+	handles := []*Handle{handle}
+	current := handle.group.Current()
+	if handle.options.URL != "" || current == nil {
+		return handles
+	}
+	for _, other := range s.handles() {
+		if other != handle && other.options.URL == "" && other.group.Current() == current {
+			handles = append(handles, other)
+		}
+	}
+	return handles
+}
+
 // verify downloads through outbound up to attempts times and records the verdict.
-func (s *Service) verify(ctx context.Context, outbound adapter.Outbound, verdicts map[string]bool, attempts int) bool {
+func (s *Service) verify(ctx context.Context, outbound adapter.Outbound, verdicts map[string]bool, attempts int, timeout time.Duration) bool {
 	if verdict, loaded := verdicts[outbound.Tag()]; loaded {
 		return verdict
 	}
 	for range attempts {
-		measured := s.download(ctx, outbound)
+		measured := s.download(ctx, outbound, timeout)
 		s.logSample(outbound, measured)
 		if !measured.junk(s.maxRatio) {
 			s.results[outbound.Tag()] = result{ok: true, latency: measured.firstByte}
@@ -414,28 +442,49 @@ func (s *Service) verify(ctx context.Context, outbound adapter.Outbound, verdict
 	return false
 }
 
-func (s *Service) checkDownloadGroup(ctx context.Context, handle *Handle, verdicts map[string]bool) {
+// checkDownloadGroup verifies the selection and walks the pool when it fails.
+// A scheduled check needs two failures in a row, since one sample alone
+// collapses now and then, and verifies a candidate before switching to it. A
+// check triggered by a failing connection tests once against a short limit and
+// switches to each candidate before verifying it, so traffic leaves a dead node
+// at once; the pool was screened recently.
+func (s *Service) checkDownloadGroup(ctx context.Context, handle *Handle, verdicts map[string]bool, triggered bool) {
 	current := handle.group.Current()
 	if current == nil {
 		return
 	}
-	// Two failures in a row before switching: one sample alone collapses now and then.
-	if s.verify(ctx, current, verdicts, 2) || !s.domesticOK(ctx) {
+	attempts, timeout := 2, s.timeout
+	if triggered {
+		attempts, timeout = 1, min(triggeredTimeout, s.timeout)
+	}
+	if s.verify(ctx, current, verdicts, attempts, timeout) || !s.domesticOK(ctx) {
 		return
 	}
 	s.results[current.Tag()] = result{}
+	reason := "check: " + current.Tag() + " disqualified"
+	if triggered {
+		reason = "connection failed, " + current.Tag() + " disqualified"
+	}
 	tried := map[string]bool{current.Tag(): true}
 	for _, candidate := range s.pool(handle, tried) {
 		tried[candidate.Tag()] = true
-		if s.verify(ctx, candidate, verdicts, 1) {
-			handle.group.Choose(candidate, "check: "+current.Tag()+" disqualified")
+		if triggered {
+			handle.group.Choose(candidate, reason)
+		}
+		if s.verify(ctx, candidate, verdicts, 1, s.timeout) {
+			if !triggered {
+				handle.group.Choose(candidate, reason)
+			}
 			return
 		}
 		s.results[candidate.Tag()] = result{}
+		if triggered {
+			reason = candidate.Tag() + " disqualified"
+		}
 	}
 	// A degraded network can exhaust several groups in a row; screen at most once per check interval.
 	if time.Since(s.lastScreen) < s.checkInterval {
-		s.logger.Warn("group ", handle.group.Tag(), ": pool exhausted, keeping ", current.Tag(), " until the next screening")
+		s.logger.Warn("group ", handle.group.Tag(), ": pool exhausted, keeping ", handle.group.Current().Tag(), " until the next screening")
 		return
 	}
 	s.logger.Warn("group ", handle.group.Tag(), ": pool exhausted, screening")

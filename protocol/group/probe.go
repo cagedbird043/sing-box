@@ -207,17 +207,24 @@ func (p *Probe) InterfaceUpdated(ctx context.Context) {
 	}
 }
 
-// A failed connection asks for a prompt check; the check, not this failure,
+// connectionFailed asks for a prompt check; the check, not this failure,
 // decides whether the member is switched away from.
+func (p *Probe) connectionFailed(err error) {
+	p.logger.Debug("connection failed, requesting check: ", err)
+	p.handle.Trigger()
+}
+
+// DialContext serves callers that dial the group itself, such as a DNS detour;
+// routed connections dial the leaf and are observed by ObserveProbeConnection.
 func (p *Probe) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	conn, err := p.selected.Load().DialContext(ctx, network, destination)
 	if err != nil {
 		if ctx.Err() == nil {
-			p.logger.DebugContext(ctx, "dial failed, requesting check: ", err)
-			p.handle.Trigger()
+			p.connectionFailed(err)
 		}
 		return nil, err
 	}
+	conn = newProbeConn(conn, p.connectionFailed)
 	return p.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsProviderConnectionFromContext(ctx)), nil
 }
 
@@ -225,10 +232,44 @@ func (p *Probe) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.
 	conn, err := p.selected.Load().ListenPacket(ctx, destination)
 	if err != nil {
 		if ctx.Err() == nil {
-			p.logger.DebugContext(ctx, "listen failed, requesting check: ", err)
-			p.handle.Trigger()
+			p.connectionFailed(err)
 		}
 		return nil, err
 	}
 	return p.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsProviderConnectionFromContext(ctx)), nil
+}
+
+func probesIn(chain []adapter.Outbound) []*Probe {
+	var probes []*Probe
+	for _, outbound := range chain {
+		if probe, isProbe := outbound.(*Probe); isProbe {
+			probes = append(probes, probe)
+		}
+	}
+	return probes
+}
+
+// ObserveProbeConnection wraps a routed connection whose chain passes probe
+// groups, so a transport failure on it asks those groups for a prompt check.
+func ObserveProbeConnection(chain []adapter.Outbound, conn net.Conn) net.Conn {
+	probes := probesIn(chain)
+	if len(probes) == 0 {
+		return conn
+	}
+	return newProbeConn(conn, func(err error) {
+		for _, probe := range probes {
+			probe.connectionFailed(err)
+		}
+	})
+}
+
+// ReportProbeDialFailure asks the probe groups on a routed chain for a prompt
+// check after its leaf failed to connect.
+func ReportProbeDialFailure(chain []adapter.Outbound, err error) {
+	if E.IsCanceled(err) {
+		return
+	}
+	for _, probe := range probesIn(chain) {
+		probe.connectionFailed(err)
+	}
 }
