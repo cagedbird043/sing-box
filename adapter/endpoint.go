@@ -33,7 +33,9 @@ type EndpointManager interface {
 	Create(ctx context.Context, router Router, logger log.ContextLogger, tag string, endpointType string, options any) error
 }
 
+// ProviderEndpointManager publishes endpoints whose scopes are owned by
+// providers. fingerprints maps node tags to OutboundFingerprint values.
 type ProviderEndpointManager interface {
 	EndpointManager
-	PublishProvider(namespace string, nodes []Endpoint) error
+	PublishProvider(namespace string, nodes []Endpoint, fingerprints map[string]string) error
 }

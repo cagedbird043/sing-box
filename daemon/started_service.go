@@ -623,6 +623,7 @@ func (s *StartedService) readGroups() *Groups {
 			var item GroupItem
 			item.Tag = itemTag
 			item.Type = itemOutbound.Type()
+			item.Fingerprint = outboundFingerprint(boxService.outboundManager, itemTag)
 			var history *adapter.URLTestHistory
 			switch typedGroup := iGroup.(type) {
 			case *group.URLTest:
@@ -644,6 +645,14 @@ func (s *StartedService) readGroups() *Groups {
 		gs.Group = append(gs.Group, &g)
 	}
 	return &gs
+}
+
+func outboundFingerprint(manager adapter.OutboundManager, tag string) string {
+	if fingerprinter, ok := manager.(adapter.OutboundFingerprinter); ok {
+		fingerprint, _ := fingerprinter.OutboundFingerprint(tag)
+		return fingerprint
+	}
+	return ""
 }
 
 func (s *StartedService) GetClashModeStatus(ctx context.Context, empty *emptypb.Empty) (*ClashModeStatus, error) {
@@ -1173,8 +1182,9 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 			historyStorage := boxService.urlTestHistoryStorage
 			for _, ob := range boxService.outboundManager.Outbounds() {
 				item := &GroupItem{
-					Tag:  ob.Tag(),
-					Type: ob.Type(),
+					Tag:         ob.Tag(),
+					Type:        ob.Type(),
+					Fingerprint: outboundFingerprint(boxService.outboundManager, ob.Tag()),
 				}
 				if history := group.LoadURLTestHistory(historyStorage, ob, N.NetworkTCP); history != nil {
 					item.UrlTestTime = history.Time.Unix()
@@ -1184,8 +1194,9 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 			}
 			for _, ep := range boxService.endpointManager.Endpoints() {
 				item := &GroupItem{
-					Tag:  ep.Tag(),
-					Type: ep.Type(),
+					Tag:         ep.Tag(),
+					Type:        ep.Type(),
+					Fingerprint: outboundFingerprint(boxService.outboundManager, ep.Tag()),
 				}
 				if history := group.LoadURLTestHistory(historyStorage, ep, N.NetworkTCP); history != nil {
 					item.UrlTestTime = history.Time.Unix()

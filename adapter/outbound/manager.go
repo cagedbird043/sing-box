@@ -12,7 +12,10 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-var _ adapter.OutboundManager = (*Manager)(nil)
+var (
+	_ adapter.OutboundManager       = (*Manager)(nil)
+	_ adapter.OutboundFingerprinter = (*Manager)(nil)
+)
 
 type Manager struct {
 	registry                adapter.OutboundRegistry
@@ -22,6 +25,7 @@ type Manager struct {
 	outbounds               []adapter.Outbound
 	outboundByTag           map[string]adapter.Outbound
 	providerOutbounds       map[string][]adapter.Outbound
+	fingerprintByTag        map[string]string
 	defaultOutbound         adapter.Outbound
 	defaultOutboundFallback func() (adapter.Outbound, error)
 }
@@ -33,6 +37,7 @@ func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointMana
 		defaultTag:        defaultTag,
 		outboundByTag:     make(map[string]adapter.Outbound),
 		providerOutbounds: make(map[string][]adapter.Outbound),
+		fingerprintByTag:  make(map[string]string),
 	}
 }
 
@@ -166,6 +171,21 @@ func (m *Manager) Outbound(tag string) (adapter.Outbound, bool) {
 	return m.endpoint.Get(tag)
 }
 
+// OutboundFingerprint covers outbounds and endpoints, matching Outbound.
+func (m *Manager) OutboundFingerprint(tag string) (string, bool) {
+	m.access.RLock()
+	fingerprint, found := m.fingerprintByTag[tag]
+	_, isOutbound := m.outboundByTag[tag]
+	m.access.RUnlock()
+	if found || isOutbound {
+		return fingerprint, found
+	}
+	if fingerprinter, ok := m.endpoint.(adapter.OutboundFingerprinter); ok {
+		return fingerprinter.OutboundFingerprint(tag)
+	}
+	return "", false
+}
+
 func (m *Manager) Default() adapter.Outbound {
 	m.access.RLock()
 	defer m.access.RUnlock()
@@ -188,6 +208,9 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
+	if fingerprint := adapter.OutboundFingerprint(inboundType, options); fingerprint != "" {
+		m.fingerprintByTag[tag] = fingerprint
+	}
 	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
 		m.defaultOutbound = outbound
 	}
@@ -196,7 +219,7 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 
 // PublishProvider replaces only the nodes owned by a provider namespace. Their
 // lifecycle belongs to the provider's scope, never to the static manager scope.
-func (m *Manager) PublishProvider(namespace string, nodes []adapter.Outbound) error {
+func (m *Manager) PublishProvider(namespace string, nodes []adapter.Outbound, fingerprints map[string]string) error {
 	m.access.Lock()
 	defer m.access.Unlock()
 	prefix := namespace + "/"
@@ -218,9 +241,13 @@ func (m *Manager) PublishProvider(namespace string, nodes []adapter.Outbound) er
 	}
 	for _, node := range old {
 		delete(m.outboundByTag, node.Tag())
+		delete(m.fingerprintByTag, node.Tag())
 	}
 	for _, node := range nodes {
 		m.outboundByTag[node.Tag()] = node
+		if fingerprint := fingerprints[node.Tag()]; fingerprint != "" {
+			m.fingerprintByTag[node.Tag()] = fingerprint
+		}
 	}
 	if len(nodes) == 0 {
 		delete(m.providerOutbounds, namespace)
