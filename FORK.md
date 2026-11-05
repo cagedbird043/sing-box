@@ -25,9 +25,8 @@
 
 - 提交信息用中文，不带 AI 署名（无 `Co-Authored-By`、无 `Generated with`）。前缀风格不强制统一。
 - 提交标题不加 `[skip ci]`。GitHub 只看推送顶端那个提交的标题，而补丁栈的顶端经常是文档主题，加了会让整个候选推送都不构建。纯文档改动靠 workflow 的 paths 过滤跳过。
-- 每个主题一个提交：
-  - 修改已有主题：`git commit --fixup=<主题提交>`，然后 `git rebase -i --autosquash <基线tag>`。
-  - 只有新主题才新开提交。
+- 平时迭代一律在栈顶新开提交，不 fixup、不改写历史，中间状态可以逐个推送和回看。
+- 跟进上游新 tag 变基时，再按主题把迭代提交合并进各自的主题提交（`git rebase -i <基线tag>` 里 squash/fixup），整理成每个主题一个提交。
 - `cmd/sing-box/cmd_api_provider*.go` 是配置与订阅一键更新主题中有意新增的上游路径。
 - 整理补丁栈前后：
   - `git diff <旧HEAD> <新HEAD>` 只能出现有意的改动。
