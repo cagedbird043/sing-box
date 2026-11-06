@@ -19,6 +19,7 @@ import (
 	"github.com/sagernet/sing-box/experimental/locale"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/protocol/group"
+	"github.com/sagernet/sing-box/service/nodeprobe"
 	"github.com/sagernet/sing-box/service/oomkiller"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/memory"
@@ -605,13 +606,32 @@ func (s *StartedService) readGroups() *Groups {
 		g.Tag = iGroup.Tag()
 		g.Type = iGroup.Type()
 		_, g.Selectable = iGroup.(*group.Selector)
-		if selected := iGroup.Selected(N.NetworkTCP); selected != nil {
-			g.Selected = selected.Tag()
-		}
 		if boxService.cacheFile != nil {
 			if isExpand, loaded := boxService.cacheFile.LoadGroupExpand(g.Tag); loaded {
 				g.IsExpand = isExpand
 			}
+		}
+		var probeHandle *nodeprobe.Handle
+		var probeReports map[string]nodeprobe.Report
+		if probeGroup, isProbe := iGroup.(*group.Probe); isProbe {
+			probeHandle = probeGroup.ProbeHandle()
+		}
+		if probeHandle != nil {
+			var state nodeprobe.State
+			state, probeReports = probeHandle.Snapshot()
+			g.Probe = &ProbeGroup{
+				Url:         probeHandle.URL(),
+				MaxRTTRatio: probeHandle.MaxRTTRatio(),
+				Running:     state.Running,
+				Generation:  state.Generation,
+				Error:       state.Error,
+			}
+			if !state.ScreenedAt.IsZero() {
+				g.Probe.ScreenedAt = state.ScreenedAt.UnixMilli()
+			}
+		}
+		if selected := iGroup.Selected(N.NetworkTCP); selected != nil {
+			g.Selected = selected.Tag()
 		}
 
 		for _, itemTag := range iGroup.All() {
@@ -636,6 +656,18 @@ func (s *StartedService) readGroups() *Groups {
 			if history != nil {
 				item.UrlTestTime = history.Time.Unix()
 				item.UrlTestDelay = int32(history.Delay)
+			}
+			if probeHandle != nil {
+				if report, loaded := probeReports[itemTag]; loaded {
+					item.Probe = &ProbeReport{
+						Time:        report.Time.UnixMilli(),
+						FirstByteMs: int32(report.FirstByte.Milliseconds()),
+						TransferMs:  int32(report.Transfer.Milliseconds()),
+						Ok:          report.OK,
+						Error:       report.Error,
+						Ratio:       report.Ratio,
+					}
+				}
 			}
 			g.Items = append(g.Items, &item)
 		}
@@ -748,10 +780,14 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 	if !isLoaded {
 		return nil, status.Error(codes.NotFound, "outbound not found: "+outboundTag)
 	}
-	urlTest, isURLTest := outbound.(*group.URLTest)
-	if isURLTest {
-		go urlTest.CheckOutbounds()
-	} else {
+	switch typedGroup := outbound.(type) {
+	case *group.URLTest:
+		go typedGroup.CheckOutbounds()
+	case *group.Probe:
+		if handle := typedGroup.ProbeHandle(); handle != nil {
+			handle.Screen()
+		}
+	default:
 		go group.URLTestMembers(boxService.ctx, boxService.outboundManager, boxService.urlTestHistoryStorage, boxService.logFactory.Logger(), []adapter.Outbound{outbound})
 	}
 	return &emptypb.Empty{}, nil

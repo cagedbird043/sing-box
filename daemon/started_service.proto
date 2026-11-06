@@ -121,6 +121,21 @@ message Group {
   string selected = 4;
   bool isExpand = 5;
   repeated GroupItem items = 6;
+  // Set for a probe group.
+  ProbeGroup probe = 7;
+}
+
+message ProbeGroup {
+  // Request URL of a URL probe group; empty for a download group.
+  string url = 1;
+  // A download disqualifies when transfer exceeds this many times first byte.
+  double maxRTTRatio = 2;
+  // Unix milliseconds of the last screening attempt's completion; 0 if none.
+  int64 screenedAt = 3;
+  bool running = 4;
+  // Increments after every screening attempt, including skipped or failed ones.
+  uint64 generation = 5;
+  string error = 6;
 }
 
 message GroupItem {
@@ -130,6 +145,20 @@ message GroupItem {
   int32 urlTestDelay = 4;
   // Hash of the node's type and options, excluding its tag; empty if unknown.
   string fingerprint = 5;
+  // Latest node-probe measurement; set for members of a probe group.
+  ProbeReport probe = 6;
+}
+
+message ProbeReport {
+  // Unix milliseconds.
+  int64 time = 1;
+  int32 firstByteMs = 2;
+  // Zero for a plain request.
+  int32 transferMs = 3;
+  bool ok = 4;
+  string error = 5;
+  // Computed from full precision durations, not the truncated millisecond fields.
+  double ratio = 6;
 }
 
 message URLTestRequest {

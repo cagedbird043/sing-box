@@ -6,6 +6,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
@@ -40,7 +41,7 @@ type Probe struct {
 	logger                       log.ContextLogger
 	probeTag                     string
 	groupOptions                 nodeprobe.GroupOptions
-	handle                       *nodeprobe.Handle
+	handle                       atomic.Pointer[nodeprobe.Handle]
 	tags                         []string
 	candidates                   []adapter.Outbound
 	selected                     common.TypedValue[adapter.Outbound]
@@ -103,9 +104,10 @@ func (p *Probe) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if err != nil {
 		return err
 	}
-	p.handle = probeService.Register(p, p.groupOptions)
+	handle := probeService.Register(p, p.groupOptions)
+	p.handle.Store(handle)
 	scope.Add(func() error {
-		p.handle.Close()
+		handle.Close()
 		return nil
 	})
 	return nil
@@ -141,8 +143,8 @@ func (p *Probe) updateMembers(nodes []adapter.Outbound) error {
 			p.history.NotifyUpdated()
 		}
 	}
-	if lost && p.handle != nil {
-		p.handle.Trigger()
+	if handle := p.handle.Load(); lost && handle != nil {
+		handle.Trigger()
 	}
 	return nil
 }
@@ -155,6 +157,11 @@ func (p *Probe) Candidates() []adapter.Outbound {
 
 func (p *Probe) Current() adapter.Outbound {
 	return p.selected.Load()
+}
+
+// ProbeHandle returns the node-probe registration, or nil before start.
+func (p *Probe) ProbeHandle() *nodeprobe.Handle {
+	return p.handle.Load()
 }
 
 func (p *Probe) Choose(detour adapter.Outbound, reason string) {
@@ -202,8 +209,8 @@ func (p *Probe) References() []string {
 }
 
 func (p *Probe) InterfaceUpdated(ctx context.Context) {
-	if p.handle != nil {
-		p.handle.NetworkChanged()
+	if handle := p.handle.Load(); handle != nil {
+		handle.NetworkChanged()
 	}
 }
 
@@ -211,7 +218,9 @@ func (p *Probe) InterfaceUpdated(ctx context.Context) {
 // decides whether the member is switched away from.
 func (p *Probe) connectionFailed(err error) {
 	p.logger.Debug("connection failed, requesting check: ", err)
-	p.handle.Trigger()
+	if handle := p.handle.Load(); handle != nil {
+		handle.Trigger()
+	}
 }
 
 // DialContext serves callers that dial the group itself, such as a DNS detour;

@@ -5,6 +5,7 @@ package nodeprobe
 import (
 	"cmp"
 	"context"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	boxService "github.com/sagernet/sing-box/adapter/service"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -70,11 +72,33 @@ type Handle struct {
 	options   GroupOptions
 	pending   atomic.Bool
 	lastCheck time.Time
+	// Request results of a URL group, guarded by service.reportsAccess.
+	reports map[string]Report
+	error   string
 }
 
 type result struct {
 	ok      bool
 	latency time.Duration
+}
+
+// Report is the latest measurement of one member, readable from any goroutine.
+type Report struct {
+	Time      time.Time
+	FirstByte time.Duration
+	// Transfer is zero for a plain request.
+	Transfer time.Duration
+	OK       bool
+	Error    string
+	Ratio    float64
+}
+
+// State describes a complete shared screening, including skipped attempts.
+type State struct {
+	ScreenedAt time.Time
+	Running    bool
+	Generation uint64
+	Error      string
 }
 
 type Service struct {
@@ -95,6 +119,13 @@ type Service struct {
 
 	networkChanged chan struct{}
 	triggers       chan *Handle
+	screenRequests chan struct{}
+	history        *urltest.HistoryStorage
+
+	reportsAccess sync.RWMutex
+	reports       map[string]Report
+	state         State
+	screenPending bool
 
 	// Owned by the loop goroutine.
 	results      map[string]result
@@ -129,6 +160,8 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 		pause:          service.FromContext[pause.Manager](ctx),
 		networkChanged: make(chan struct{}, 1),
 		triggers:       make(chan *Handle, 64),
+		screenRequests: make(chan struct{}, 1),
+		history:        service.PtrFromContext[urltest.HistoryStorage](ctx),
 		results:        make(map[string]result),
 	}
 	if s.downloadBytes == 0 {
@@ -194,6 +227,48 @@ func (h *Handle) NetworkChanged() {
 	}
 }
 
+// Screen requests a shared screening. Requests queued or running together coalesce.
+func (h *Handle) Screen() {
+	s := h.service
+	s.reportsAccess.Lock()
+	defer s.reportsAccess.Unlock()
+	if s.state.Running || s.screenPending {
+		return
+	}
+	s.screenPending = true
+	select {
+	case s.screenRequests <- struct{}{}:
+	default:
+	}
+}
+
+// Snapshot atomically reads lifecycle and measurements as this group judges them.
+// Missing reports are unchecked, not failed. Request groups never share reports.
+func (h *Handle) Snapshot() (State, map[string]Report) {
+	s := h.service
+	s.reportsAccess.RLock()
+	defer s.reportsAccess.RUnlock()
+	state := s.state
+	reports := s.reports
+	if h.options.URL != "" {
+		reports = h.reports
+	}
+	if state.Error == "" {
+		state.Error = h.error
+	}
+	return state, maps.Clone(reports)
+}
+
+// URL returns the request URL of a URL group, or empty for a download group.
+func (h *Handle) URL() string {
+	return h.options.URL
+}
+
+// MaxRTTRatio returns the transfer to first byte ratio above which a download disqualifies.
+func (h *Handle) MaxRTTRatio() float64 {
+	return h.service.maxRatio
+}
+
 func (s *Service) handles() []*Handle {
 	s.groupsAccess.Lock()
 	defer s.groupsAccess.Unlock()
@@ -251,6 +326,9 @@ func (s *Service) loop(ctx context.Context) {
 			s.domesticAt = time.Time{}
 			s.screen(ctx, true, "network changed")
 			screenTicker.Reset(s.screenInterval)
+		case <-s.screenRequests:
+			s.screen(ctx, false, "requested")
+			screenTicker.Reset(s.screenInterval)
 		case handle := <-s.triggers:
 			handle.pending.Store(false)
 			if time.Since(handle.lastCheck) >= passiveCooldown && !s.paused() {
@@ -286,11 +364,44 @@ func (s *Service) domesticOK(ctx context.Context) bool {
 // the pool. A group keeps its selection unless it was disqualified, or
 // reselect is set (network changed).
 func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
+	handles := s.handles()
+	s.prune(handles)
+	s.reportsAccess.Lock()
+	s.state.Running, s.state.Error = true, ""
+	s.screenPending = false
+	select {
+	case <-s.screenRequests:
+	default:
+	}
+	clear(s.reports)
+	for _, handle := range handles {
+		clear(handle.reports)
+		handle.error = ""
+	}
+	s.reportsAccess.Unlock()
+	s.notify()
+	var screenError string
+	defer func() {
+		if ctx.Err() != nil {
+			screenError = ctx.Err().Error()
+		}
+		s.reportsAccess.Lock()
+		s.state.Running = false
+		s.state.Generation++
+		s.state.ScreenedAt = time.Now()
+		s.state.Error = screenError
+		s.reportsAccess.Unlock()
+		s.notify()
+	}()
+	if s.paused() {
+		screenError = "screening skipped: device or network is paused"
+		return
+	}
 	if !s.domesticOK(ctx) {
+		screenError = "screening skipped: domestic connectivity check failed"
 		return
 	}
 	s.lastScreen = time.Now()
-	handles := s.handles()
 	var nodes []adapter.Outbound
 	seen := make(map[string]bool)
 	for _, handle := range handles {
@@ -319,11 +430,12 @@ func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
 			defer waitGroup.Done()
 			defer func() { <-semaphore }()
 			measured := s.download(ctx, node, s.timeout)
-			s.logSample(node, measured)
+			ok := !measured.junk(s.maxRatio)
+			s.record(nil, node, measured, ok)
 			access.Lock()
 			defer access.Unlock()
-			results[node.Tag()] = result{ok: !measured.junk(s.maxRatio), latency: measured.firstByte}
-			if results[node.Tag()].ok {
+			results[node.Tag()] = result{ok: ok, latency: measured.firstByte}
+			if ok {
 				passed++
 			}
 		}()
@@ -332,11 +444,12 @@ func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
 	if ctx.Err() != nil {
 		return
 	}
-	if len(nodes) > 0 && passed == 0 {
+	allFailed := len(nodes) > 0 && passed == 0
+	if allFailed {
 		s.logger.Warn("screen (", reason, "): every node failed, treated as a network problem")
-		return
+	} else {
+		s.results = results
 	}
-	s.results = results
 	s.logger.Info("screen (", reason, "): ", passed, "/", len(nodes), " passed, target ", s.target())
 	for _, handle := range handles {
 		if handle.options.URL != "" {
@@ -344,8 +457,10 @@ func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
 			continue
 		}
 		pool := s.pool(handle, nil)
-		if len(pool) == 0 {
-			s.logger.Warn("group ", handle.group.Tag(), ": no passing member")
+		if allFailed || len(pool) == 0 {
+			s.reportsAccess.Lock()
+			handle.error = "no passing download member; selection retained"
+			s.reportsAccess.Unlock()
 			continue
 		}
 		current := handle.group.Current()
@@ -360,13 +475,65 @@ func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
 	}
 }
 
-func (s *Service) logSample(outbound adapter.Outbound, measured sample) {
+// prune bounds stored data by the live download members, even between screens.
+func (s *Service) prune(handles []*Handle) {
+	live := make(map[string]bool)
+	for _, handle := range handles {
+		if handle.options.URL == "" {
+			for _, candidate := range handle.group.Candidates() {
+				live[candidate.Tag()] = true
+			}
+		}
+	}
+	s.reportsAccess.Lock()
+	for tag := range s.reports {
+		if !live[tag] {
+			delete(s.reports, tag)
+		}
+	}
+	s.reportsAccess.Unlock()
+	for tag := range s.results {
+		if !live[tag] {
+			delete(s.results, tag)
+		}
+	}
+}
+
+func (s *Service) notify() {
+	if s.history != nil {
+		s.history.NotifyUpdated()
+	}
+}
+
+// record logs a sample and publishes it as the member's report; handle is the
+// URL group a plain request was made for, or nil for a download.
+func (s *Service) record(handle *Handle, outbound adapter.Outbound, measured sample, ok bool) {
+	report := Report{Time: time.Now(), OK: ok, Ratio: measured.ratio()}
 	if measured.err != nil {
 		s.logger.Debug(outbound.Tag(), ": ", measured.err)
-		return
+		report.Error = measured.err.Error()
+	} else {
+		s.logger.Debug(outbound.Tag(), ": first byte ", measured.firstByte.Milliseconds(), "ms, transfer ",
+			measured.transfer.Milliseconds(), "ms, ratio ", int(measured.ratio()*10+0.5), "/10, junk ", measured.junk(s.maxRatio))
+		report.FirstByte, report.Transfer = measured.firstByte, measured.transfer
+		if !ok {
+			report.Error = "transfer to first byte ratio exceeds max_rtt_ratio"
+		}
 	}
-	s.logger.Debug(outbound.Tag(), ": first byte ", measured.firstByte.Milliseconds(), "ms, transfer ",
-		measured.transfer.Milliseconds(), "ms, ratio ", int(measured.ratio()*10+0.5), "/10, junk ", measured.junk(s.maxRatio))
+	s.reportsAccess.Lock()
+	if handle != nil {
+		if handle.reports == nil {
+			handle.reports = make(map[string]Report)
+		}
+		handle.reports[outbound.Tag()] = report
+	} else {
+		if s.reports == nil {
+			s.reports = make(map[string]Report)
+		}
+		s.reports[outbound.Tag()] = report
+	}
+	s.reportsAccess.Unlock()
+	s.notify()
 }
 
 // passing reports the last verdict; a member the pool has never seen is not
@@ -393,6 +560,7 @@ func (s *Service) pool(handle *Handle, exclude map[string]bool) []adapter.Outbou
 // check verifies each group's selection and moves a disqualified group along
 // its pool. Within one call a node shared by several groups is tested once.
 func (s *Service) check(ctx context.Context, handles []*Handle, reason string, triggered bool) {
+	s.prune(s.handles())
 	verdicts := make(map[string]bool)
 	for _, handle := range handles {
 		if ctx.Err() != nil {
@@ -431,8 +599,9 @@ func (s *Service) verify(ctx context.Context, outbound adapter.Outbound, verdict
 	}
 	for range attempts {
 		measured := s.download(ctx, outbound, timeout)
-		s.logSample(outbound, measured)
-		if !measured.junk(s.maxRatio) {
+		ok := !measured.junk(s.maxRatio)
+		s.record(nil, outbound, measured, ok)
+		if ok {
 			s.results[outbound.Tag()] = result{ok: true, latency: measured.firstByte}
 			verdicts[outbound.Tag()] = true
 			return true
@@ -493,6 +662,11 @@ func (s *Service) checkDownloadGroup(ctx context.Context, handle *Handle, verdic
 
 // checkRequestGroup tests every member of a URL group with a plain request.
 func (s *Service) checkRequestGroup(ctx context.Context, handle *Handle, reselect bool) {
+	s.reportsAccess.Lock()
+	clear(handle.reports)
+	handle.error = ""
+	s.reportsAccess.Unlock()
+	defer s.notify()
 	current := handle.group.Current()
 	var (
 		choice        adapter.Outbound
@@ -511,7 +685,7 @@ func (s *Service) checkRequestGroup(ctx context.Context, handle *Handle, reselec
 				break
 			}
 		}
-		s.logSample(candidate, measured)
+		s.record(handle, candidate, measured, measured.err == nil)
 		if measured.err != nil {
 			continue
 		}
@@ -526,6 +700,9 @@ func (s *Service) checkRequestGroup(ctx context.Context, handle *Handle, reselec
 		}
 	}
 	if choice == nil {
+		s.reportsAccess.Lock()
+		handle.error = "no member reaches request URL; selection retained"
+		s.reportsAccess.Unlock()
 		if s.domesticOK(ctx) {
 			s.logger.Warn("group ", handle.group.Tag(), ": no member reaches ", handle.options.URL)
 		}

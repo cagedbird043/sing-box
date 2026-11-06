@@ -223,6 +223,9 @@ func buildProvider(provider adapter.Provider, snapshot adapter.ProviderSnapshot,
 		Capabilities: &ProviderCapabilities{CanHealthCheck: true},
 		Nodes:        make([]*ProviderNode, 0, len(snapshot.Outbounds)),
 	}
+	if source, hasSource := provider.(adapter.ProviderSubscriptionSource); hasSource {
+		item.Url = source.SubscriptionURL()
+	}
 	if !snapshot.UpdatedAt.IsZero() {
 		item.UpdatedAtMs = snapshot.UpdatedAt.UnixMilli()
 	}

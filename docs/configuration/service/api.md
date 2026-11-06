@@ -14,6 +14,32 @@ Android (via the Remote Control feature), or the
 
 The server also accepts [gRPC-Web](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-WEB.md) requests.
 
+### ProviderService
+
+The native `daemon.ProviderService` uses the same API listener, transports, and Bearer
+authentication as the other sing-box API methods. Configure a non-empty `secret` to
+protect subscription information.
+
+`ListProviders`, `GetProvider`, and `SubscribeProviders` return a `Provider.url`
+field (protobuf field 7). For remote providers this is the exact configured
+subscription URL; for local and inline providers it is empty. Provider responses
+do not expose request headers, local file paths, or other provider configuration.
+Existing subscription traffic, expiry, node, refresh, and health-check fields are
+unchanged.
+
+Subscription URLs may contain credentials. Clients should hide them by default
+and reveal or copy them only on explicit user action; do not write them to logs.
+
+### Probe groups
+
+`StartedService.SubscribeGroups` includes `Group.probe` for `probe` groups: the request group's `url` (empty for downloads), `maxRTTRatio`, `running`, `generation`, `screenedAt`, and `error`.
+
+Calling `StartedService.URLTest` for a probe group requests a complete shared screening by its node-probe service. Queued or running requests coalesce. Download groups keep a passing current selection; request groups retain their URL and `prefer_order` policy, with reports isolated per group.
+
+Start and completion publish updates even without selection changes. Every attempt increments `generation`, clears `running`, and updates `screenedAt` (Unix milliseconds), including offline, paused, cancelled, or all-failed attempts. Capture the previous `generation`, wait for `running == false` with a greater `generation`, and display nonempty `error`. Do not wait for every member to have a result: `prefer_order` may stop early.
+
+Absent `GroupItem.probe` means unchecked in this round, not failed. Reports contain `time` (Unix milliseconds), `firstByteMs`, `transferMs`, `ratio`, `ok`, and `error`. Millisecond durations are truncated; verdicts and `ratio` use full-precision durations. Use `ratio` directly, not a quotient of the integer millisecond fields. Plain requests have zero `transferMs` and `ratio`.
+
 ### Structure
 
 ```json

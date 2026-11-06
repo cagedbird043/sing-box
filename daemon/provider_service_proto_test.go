@@ -39,6 +39,7 @@ func TestProviderServiceDescriptor(t *testing.T) {
 	assertFieldNumber(t, "Provider", "tag", 1)
 	assertFieldNumber(t, "Provider", "type", 2)
 	assertFieldNumber(t, "Provider", "updated_at_ms", 3)
+	assertFieldNumber(t, "Provider", "url", 7)
 	assertFieldNumber(t, "ProviderActionResult", "revision", 2)
 	assertFieldNumber(t, "ProviderHealthCheckResult", "results", 4)
 	forbiddenNames := []string{"url", "header", "token", "secret", "path", "cache", "config"}
@@ -47,6 +48,12 @@ func TestProviderServiceDescriptor(t *testing.T) {
 		fields := messages.Get(messageIndex).Fields()
 		for fieldIndex := 0; fieldIndex < fields.Len(); fieldIndex++ {
 			fieldName := strings.ToLower(string(fields.Get(fieldIndex).Name()))
+			if fieldName == "url" && messages.Get(messageIndex).Name() == "Provider" {
+				if fields.Get(fieldIndex).Kind() != protoreflect.StringKind {
+					t.Fatal("Provider.url must be a string")
+				}
+				continue
+			}
 			for _, forbiddenName := range forbiddenNames {
 				if strings.Contains(fieldName, forbiddenName) {
 					t.Fatalf("sensitive field exposed in ProviderService schema: %s.%s", messages.Get(messageIndex).Name(), fieldName)
