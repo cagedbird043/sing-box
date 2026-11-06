@@ -34,11 +34,13 @@ and reveal or copy them only on explicit user action; do not write them to logs.
 
 `StartedService.SubscribeGroups` includes `Group.probe` for `probe` groups: the request group's `url` (empty for downloads), `maxRTTRatio`, `running`, `generation`, `screenedAt`, and `error`.
 
-Calling `StartedService.URLTest` for a probe group requests a complete shared screening by its node-probe service. Queued or running requests coalesce. Download groups keep a passing current selection; request groups retain their URL and `prefer_order` policy, with reports isolated per group.
+Calling `StartedService.URLTest` for a probe group requests a complete shared screening by its node-probe service. Queued or running requests coalesce. Download groups use the configured download size (128 KiB by default) and `max_rtt_ratio` (1.5 by default) to qualify members, then rank passing members by full-precision `firstByte + transfer` duration, not first-byte latency or ratio alone. Startup, scheduled complete screenings, manual screenings, and network changes select the best passing member even if the current member still passes. Equal durations retain candidate order. Request groups retain their URL and `prefer_order` policy, with reports isolated per group; `urltest` groups are unchanged.
+
+The periodic current-member health check (five minutes by default) keeps a passing selection without screening all members. If it fails, fallback candidates are tried in completion-time order from the screened pool and verified before a scheduled switch. Passive connection-failure checks still switch before verifying a fallback. Domestic connectivity failures and all-failed complete screenings retain the selection and do not replace the last passing pool.
 
 Start and completion publish updates even without selection changes. Every attempt increments `generation`, clears `running`, and updates `screenedAt` (Unix milliseconds), including offline, paused, cancelled, or all-failed attempts. Capture the previous `generation`, wait for `running == false` with a greater `generation`, and display nonempty `error`. Do not wait for every member to have a result: `prefer_order` may stop early.
 
-Absent `GroupItem.probe` means unchecked in this round, not failed. Reports contain `time` (Unix milliseconds), `firstByteMs`, `transferMs`, `ratio`, `ok`, and `error`. Millisecond durations are truncated; verdicts and `ratio` use full-precision durations. Use `ratio` directly, not a quotient of the integer millisecond fields. Plain requests have zero `transferMs` and `ratio`.
+Absent `GroupItem.probe` means unchecked in this round, not failed. Reports contain `time` (Unix milliseconds), `firstByteMs`, `transferMs`, `ratio`, `ok`, and `error`. Millisecond durations are truncated; verdicts, ranking, and `ratio` use full-precision durations. Use `ratio` directly, not a quotient of the integer millisecond fields; do not reconstruct the internal ranking score from truncated reports. Plain requests have zero `transferMs` and `ratio`.
 
 ### Structure
 

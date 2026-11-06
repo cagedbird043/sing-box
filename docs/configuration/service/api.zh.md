@@ -27,11 +27,13 @@ sing-box API 服务是用于观察与控制正在运行的 sing-box 实例的 gR
 
 `StartedService.SubscribeGroups` 为 `probe` 分组返回 `Group.probe`，包含请求型组的 `url`（下载型组为空）、`maxRTTRatio`、`running`、`generation`、`screenedAt` 和 `error`。
 
-对 probe 分组调用 `StartedService.URLTest` 会触发所属 node-probe service 的共享完整筛选；排队或正在运行的请求会合并。下载型组保留仍合格的当前节点；请求型组保留各自的 URL 与 `prefer_order` 策略，测量结果按组隔离。
+对 probe 分组调用 `StartedService.URLTest` 会触发所属 node-probe service 的共享完整筛选；排队或正在运行的请求会合并。下载型组沿用配置的下载大小（默认 128 KiB）与 `max_rtt_ratio`（默认 1.5）筛选合格节点，再按原始精度的 `firstByte + transfer` 总耗时升序排列，不单独按首字节延迟或倍率排名。启动、定时完整筛选、手动筛选及网络变化均选择最优合格节点，即使当前节点仍合格也会切换；总耗时相等时保留候选顺序。请求型组保留各自的 URL 与 `prefer_order` 策略，测量结果按组隔离；`urltest` 组行为不变。
+
+定时当前节点健康检查（默认五分钟）在当前节点合格时保留选择，不额外全量测量；失败时按已筛选候选池的总耗时顺序尝试候补，定时检查验证合格后才切换。连接失败触发的被动检查仍先切换候补再验证。国内连通性检查失败或完整筛选全部失败时，保留当前选择与上次合格候选池。
 
 筛选开始和结束均推送更新，即使没有切换节点。每次尝试结束都会递增 `generation`、清除 `running` 并更新 `screenedAt`（Unix 毫秒），包括离线、暂停、取消或全部失败。客户端应记录请求前的 `generation`，等待 `running == false` 且 `generation` 增大，并展示非空 `error`。不要等待每个成员都有结果，`prefer_order` 可能提前结束。
 
-`GroupItem.probe` 缺失表示本轮未检查，不是失败。报告含 `time`（Unix 毫秒）、`firstByteMs`、`transferMs`、`ratio`、`ok` 和 `error`。毫秒时长经过截断，下载判定与 `ratio` 使用原始精度时长；前端直接使用 `ratio`，不要从整数毫秒反推。普通请求的 `transferMs` 和 `ratio` 为零。
+`GroupItem.probe` 缺失表示本轮未检查，不是失败。报告含 `time`（Unix 毫秒）、`firstByteMs`、`transferMs`、`ratio`、`ok` 和 `error`。毫秒时长经过截断，下载判定、排名与 `ratio` 使用原始精度时长；前端直接使用 `ratio`，不要从整数毫秒反推，也不要用截断后的报告重建内部排名分值。普通请求的 `transferMs` 和 `ratio` 为零。
 
 ### 结构
 

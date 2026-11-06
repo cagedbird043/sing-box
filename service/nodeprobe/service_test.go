@@ -147,9 +147,9 @@ func TestCheckSwitchesAlongPoolPastJunk(t *testing.T) {
 	good := &node{tag: "good", addr: healthy}
 	g := &group{candidates: []adapter.Outbound{current, stale, good}, current: current}
 	s.results = map[string]result{
-		"current": {ok: true, latency: time.Millisecond},
-		"stale":   {ok: true, latency: 2 * time.Millisecond},
-		"good":    {ok: true, latency: 3 * time.Millisecond},
+		"current": {ok: true, score: time.Millisecond},
+		"stale":   {ok: true, score: 2 * time.Millisecond},
+		"good":    {ok: true, score: 3 * time.Millisecond},
 	}
 	s.checkDownloadGroup(context.Background(), &Handle{service: s, group: g}, make(map[string]bool), false)
 	if g.current != good {
@@ -176,7 +176,7 @@ func TestCheckKeepsSelectionWhenLocalNetworkIsDown(t *testing.T) {
 	}
 }
 
-func TestScreenKeepsPassingSelectionUnlessNetworkChanged(t *testing.T) {
+func TestScreenSelectsBestPassingDownload(t *testing.T) {
 	t.Parallel()
 	healthy := server(t, 20*time.Millisecond, 0)
 	slow := server(t, 300*time.Millisecond, 0)
@@ -187,8 +187,8 @@ func TestScreenKeepsPassingSelectionUnlessNetworkChanged(t *testing.T) {
 	g := &group{candidates: []adapter.Outbound{current, fastest, broken}, current: current}
 	s.groups = []*Handle{{service: s, group: g}}
 	s.screen(context.Background(), false, "test")
-	if g.current != current {
-		t.Fatalf("passing selection replaced by %s", g.current.Tag())
+	if g.current != fastest {
+		t.Fatalf("screen selected %s, want fastest", g.current.Tag())
 	}
 	if s.results["broken"].ok {
 		t.Fatal("unreachable node entered the pool")
@@ -242,7 +242,7 @@ func TestTriggeredCheckLeavesHungNodeAtOnce(t *testing.T) {
 	second := &group{candidates: []adapter.Outbound{hung, good}, current: hung}
 	other := &group{candidates: []adapter.Outbound{hung, good}, current: good}
 	s.groups = []*Handle{{service: s, group: first}, {service: s, group: second}, {service: s, group: other}}
-	s.results = map[string]result{"hung": {ok: true, latency: time.Millisecond}, "good": {ok: true, latency: 2 * time.Millisecond}}
+	s.results = map[string]result{"hung": {ok: true, score: time.Millisecond}, "good": {ok: true, score: 2 * time.Millisecond}}
 	start := time.Now()
 	s.check(context.Background(), s.sharingSelection(s.groups[0]), "test", true)
 	if elapsed := time.Since(start); elapsed > triggeredTimeout+time.Second {
@@ -293,6 +293,13 @@ func TestManualScreenDownloadsSharedPoolAndCoalesces(t *testing.T) {
 	go func() { defer close(done); s.loop(ctx) }()
 	defer func() { cancel(); <-done }()
 	waitState(t, handle, func(state State) bool { return !state.Running && state.Generation == 1 })
+	if g.Current() != fast {
+		t.Fatal("startup screening did not select the best passing download")
+	}
+	// Restore a slower but still passing selection before the manual request.
+	g.access.Lock()
+	g.current = selected
+	g.access.Unlock()
 	for len(updates) > 0 {
 		<-updates
 	}
@@ -309,8 +316,8 @@ func TestManualScreenDownloadsSharedPoolAndCoalesces(t *testing.T) {
 	if finished.Error != "" || finished.ScreenedAt.IsZero() || selected.dials.Load() != before+1 {
 		t.Fatalf("manual screening did not perform one shared download: %+v dials=%d", finished, selected.dials.Load()-before)
 	}
-	if g.Current() != selected {
-		t.Fatal("manual screening replaced a passing selection")
+	if g.Current() != fast {
+		t.Fatal("manual screening did not select the best passing download")
 	}
 	if len(s.screenRequests) != 0 {
 		t.Fatal("concurrent requests queued a redundant screening")

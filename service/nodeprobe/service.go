@@ -78,8 +78,8 @@ type Handle struct {
 }
 
 type result struct {
-	ok      bool
-	latency time.Duration
+	ok    bool
+	score time.Duration
 }
 
 // Report is the latest measurement of one member, readable from any goroutine.
@@ -361,8 +361,8 @@ func (s *Service) domesticOK(ctx context.Context) bool {
 }
 
 // screen downloads through every member of every download group and rebuilds
-// the pool. A group keeps its selection unless it was disqualified, or
-// reselect is set (network changed).
+// the pool. Download groups select the lowest full-precision first-byte plus
+// transfer duration; reselect only affects request groups (network changed).
 func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
 	handles := s.handles()
 	s.prune(handles)
@@ -434,7 +434,7 @@ func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
 			s.record(nil, node, measured, ok)
 			access.Lock()
 			defer access.Unlock()
-			results[node.Tag()] = result{ok: ok, latency: measured.firstByte}
+			results[node.Tag()] = result{ok: ok, score: measured.firstByte + measured.transfer}
 			if ok {
 				passed++
 			}
@@ -467,11 +467,7 @@ func (s *Service) screen(ctx context.Context, reselect bool, reason string) {
 		if current == pool[0] {
 			continue
 		}
-		if reselect {
-			handle.group.Choose(pool[0], "network changed")
-		} else if current == nil || !s.passing(current) {
-			handle.group.Choose(pool[0], "screen: selection disqualified")
-		}
+		handle.group.Choose(pool[0], "screen: lowest download completion time")
 	}
 }
 
@@ -536,14 +532,8 @@ func (s *Service) record(handle *Handle, outbound adapter.Outbound, measured sam
 	s.notify()
 }
 
-// passing reports the last verdict; a member the pool has never seen is not
-// held against it.
-func (s *Service) passing(outbound adapter.Outbound) bool {
-	result, loaded := s.results[outbound.Tag()]
-	return !loaded || result.ok
-}
-
-// pool returns the group's passing members by ascending latency.
+// pool returns passing members by ascending download completion time.
+// Equal scores retain candidate order, independent of concurrent completion order.
 func (s *Service) pool(handle *Handle, exclude map[string]bool) []adapter.Outbound {
 	var pool []adapter.Outbound
 	for _, candidate := range handle.group.Candidates() {
@@ -552,7 +542,7 @@ func (s *Service) pool(handle *Handle, exclude map[string]bool) []adapter.Outbou
 		}
 	}
 	slices.SortStableFunc(pool, func(a, b adapter.Outbound) int {
-		return cmp.Compare(s.results[a.Tag()].latency, s.results[b.Tag()].latency)
+		return cmp.Compare(s.results[a.Tag()].score, s.results[b.Tag()].score)
 	})
 	return pool
 }
@@ -602,7 +592,7 @@ func (s *Service) verify(ctx context.Context, outbound adapter.Outbound, verdict
 		ok := !measured.junk(s.maxRatio)
 		s.record(nil, outbound, measured, ok)
 		if ok {
-			s.results[outbound.Tag()] = result{ok: true, latency: measured.firstByte}
+			s.results[outbound.Tag()] = result{ok: true, score: measured.firstByte + measured.transfer}
 			verdicts[outbound.Tag()] = true
 			return true
 		}
