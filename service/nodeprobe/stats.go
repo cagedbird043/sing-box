@@ -63,9 +63,18 @@ type NodeInfo struct {
 	Type  string `expr:"type"`
 }
 
+// DomesticInfo is the latest direct fetch of the domestic URL; its timings
+// are zero until a fetch succeeds.
 type DomesticInfo struct {
-	OK         bool `expr:"ok"`
-	Configured bool `expr:"configured"`
+	OK         bool    `expr:"ok"`
+	Configured bool    `expr:"configured"`
+	FirstByte  float64 `expr:"first_byte"`
+	Transfer   float64 `expr:"transfer"`
+	Total      float64 `expr:"total"`
+	Throughput float64 `expr:"throughput"`
+	// Age is seconds since the latest fetch, +Inf without one.
+	Age       float64 `expr:"age"`
+	LastError string  `expr:"last_error"`
 }
 
 type NowInfo struct {
@@ -81,6 +90,30 @@ type GroupInfo struct {
 	Current string `expr:"current"`
 }
 
+// Member is one group member's statistics, without verdicts.
+type Member struct {
+	Tag       string                  `expr:"tag"`
+	Index     int                     `expr:"index"`
+	Type      string                  `expr:"type"`
+	IsCurrent bool                    `expr:"is_current"`
+	Penalized bool                    `expr:"penalized"`
+	M         map[string]MeasureStats `expr:"m"`
+	Traffic   TrafficStats            `expr:"traffic"`
+}
+
+// PeerStats summarizes one measure across the group members holding samples.
+// OKRate is over their ok_rate; the timing and throughput distributions are
+// over the p50 of the members with a successful sample.
+type PeerStats struct {
+	Count      int  `expr:"count"`
+	OK         int  `expr:"ok"`
+	OKRate     Dist `expr:"ok_rate"`
+	FirstByte  Dist `expr:"first_byte"`
+	Transfer   Dist `expr:"transfer"`
+	Total      Dist `expr:"total"`
+	Throughput Dist `expr:"throughput"`
+}
+
 // NodeEnv is the environment of eligible, qualify and score.
 type NodeEnv struct {
 	Units
@@ -94,6 +127,8 @@ type NodeEnv struct {
 	Domestic    DomesticInfo            `expr:"domestic"`
 	Now         NowInfo                 `expr:"now"`
 	Group       GroupInfo               `expr:"group"`
+	Members     []Member                `expr:"members"`
+	Peers       map[string]PeerStats    `expr:"peers"`
 }
 
 // PenaltyEnv adds this evaluation's verdict for penalty.
@@ -106,7 +141,11 @@ type PenaltyEnv struct {
 type View struct {
 	Tag       string                  `expr:"tag"`
 	Index     int                     `expr:"index"`
+	Type      string                  `expr:"type"`
+	IsCurrent bool                    `expr:"is_current"`
+	Eligible  bool                    `expr:"eligible"`
 	Qualified bool                    `expr:"qualified"`
+	HasScore  bool                    `expr:"has_score"`
 	Score     float64                 `expr:"score"`
 	Penalized bool                    `expr:"penalized"`
 	M         map[string]MeasureStats `expr:"m"`
@@ -116,11 +155,45 @@ type View struct {
 // SwitchEnv is the environment of switch.
 type SwitchEnv struct {
 	Units
-	Current  View         `expr:"current"`
-	Best     View         `expr:"best"`
-	Domestic DomesticInfo `expr:"domestic"`
-	Now      NowInfo      `expr:"now"`
-	Group    GroupInfo    `expr:"group"`
+	Current  View                 `expr:"current"`
+	Best     View                 `expr:"best"`
+	Members  []View               `expr:"members"`
+	Peers    map[string]PeerStats `expr:"peers"`
+	Domestic DomesticInfo         `expr:"domestic"`
+	Now      NowInfo              `expr:"now"`
+	Group    GroupInfo            `expr:"group"`
+}
+
+func peerStats(members []Member, measures []string) map[string]PeerStats {
+	result := make(map[string]PeerStats, len(measures))
+	var okRate, firstByte, transfer, total, throughput []float64
+	for _, name := range measures {
+		okRate, firstByte, transfer, total, throughput = okRate[:0], firstByte[:0], transfer[:0], total[:0], throughput[:0]
+		for _, member := range members {
+			stats := member.M[name]
+			if stats.Count == 0 {
+				continue
+			}
+			okRate = append(okRate, stats.OKRate)
+			if stats.OKRate == 0 {
+				continue
+			}
+			firstByte = append(firstByte, stats.FirstByte.P50)
+			transfer = append(transfer, stats.Transfer.P50)
+			total = append(total, stats.Total.P50)
+			throughput = append(throughput, stats.Throughput.P50)
+		}
+		result[name] = PeerStats{
+			Count:      len(okRate),
+			OK:         len(throughput),
+			OKRate:     distribution(okRate),
+			FirstByte:  distribution(firstByte),
+			Transfer:   distribution(transfer),
+			Total:      distribution(total),
+			Throughput: distribution(throughput),
+		}
+	}
+	return result
 }
 
 func nowInfo(now time.Time) NowInfo {

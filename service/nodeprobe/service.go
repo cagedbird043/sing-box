@@ -128,7 +128,7 @@ type Service struct {
 	// Owned by the loop goroutine.
 	rounds       map[string]int
 	domesticAt   time.Time
-	domesticPass bool
+	domesticLast sample
 	// Set when a sample was dropped because its member was replaced meanwhile.
 	replaced atomic.Bool
 }
@@ -489,18 +489,34 @@ func (s *Service) domesticOK(ctx context.Context) bool {
 		return true
 	}
 	if time.Since(s.domesticAt) < domesticCacheTime {
-		return s.domesticPass
+		return s.domesticLast.err == nil
 	}
-	result := fetch(ctx, s.direct, s.domestic.url, s.domestic.bytes, s.domestic.timeout)
-	s.domesticAt, s.domesticPass = time.Now(), result.err == nil
-	if result.err != nil {
-		s.logger.Warn("domestic check failed, local network treated as down: ", result.err)
+	s.domesticLast = fetch(ctx, s.direct, s.domestic.url, s.domestic.bytes, s.domestic.timeout)
+	s.domesticAt = time.Now()
+	if s.domesticLast.err != nil {
+		s.logger.Warn("domestic check failed, local network treated as down: ", s.domesticLast.err)
 	}
-	return s.domesticPass
+	return s.domesticLast.err == nil
 }
 
-func (s *Service) domesticInfo() DomesticInfo {
-	return DomesticInfo{OK: s.domestic == nil || s.domesticPass, Configured: s.domestic != nil}
+func (s *Service) domesticInfo(now time.Time) DomesticInfo {
+	info := DomesticInfo{OK: s.domestic == nil, Configured: s.domestic != nil, Age: math.Inf(1)}
+	if s.domestic == nil || s.domesticAt.IsZero() {
+		return info
+	}
+	last := s.domesticLast
+	info.Age = now.Sub(s.domesticAt).Seconds()
+	if last.err != nil {
+		info.LastError = last.err.Error()
+		return info
+	}
+	info.OK = true
+	info.FirstByte, info.Transfer = last.firstByte.Seconds(), last.transfer.Seconds()
+	info.Total = info.FirstByte + info.Transfer
+	if last.bytes > 0 {
+		info.Throughput = float64(last.bytes) / max(last.transfer, time.Millisecond).Seconds()
+	}
+	return info
 }
 
 // measureNode runs one measure through node for every target of this round.
@@ -626,9 +642,9 @@ func (s *Service) screen(ctx context.Context, policies []*policy, reason string)
 	nodesByMeasure := make(map[string][]adapter.Outbound)
 	seen := make(map[string]map[string]bool)
 	for _, handle := range handles {
-		candidates := handle.group.Candidates()
-		for index, candidate := range candidates {
-			if !s.eligible(handle, candidate, index, now) {
+		group := s.groupContext(handle, now)
+		for index, candidate := range group.candidates {
+			if !s.eligible(handle, group, index, now) {
 				continue
 			}
 			for _, name := range handle.policy.screenMeasures {
@@ -678,47 +694,100 @@ type evaluation struct {
 	view   View
 }
 
-func (s *Service) nodeEnv(handle *Handle, node adapter.Outbound, index int, now time.Time) NodeEnv {
-	tag := node.Tag()
-	current := handle.group.Current()
+// groupContext is a group's members with their statistics at one instant,
+// shared by the evaluations of one pass.
+type groupContext struct {
+	candidates []adapter.Outbound
+	current    adapter.Outbound
+	members    []Member
+	peers      map[string]PeerStats
+	domestic   DomesticInfo
+}
+
+func (s *Service) groupContext(handle *Handle, now time.Time) *groupContext {
+	candidates := handle.group.Candidates()
+	group := &groupContext{
+		candidates: candidates,
+		current:    handle.group.Current(),
+		members:    make([]Member, len(candidates)),
+		domestic:   s.domesticInfo(now),
+	}
+	s.access.RLock()
+	for index, candidate := range candidates {
+		group.members[index].Penalized = now.Before(handle.penalties[candidate.Tag()])
+	}
+	s.access.RUnlock()
+	for index, candidate := range candidates {
+		member := &group.members[index]
+		member.Tag, member.Index, member.Type = candidate.Tag(), index, candidate.Type()
+		member.IsCurrent = candidate == group.current
+		member.M = s.samples.stats(handle.policy.measures, member.Tag, now)
+		member.Traffic = s.traffic.stats(member.Tag, now)
+	}
+	group.peers = peerStats(group.members, handle.policy.measures)
+	return group
+}
+
+func (s *Service) nodeEnv(handle *Handle, group *groupContext, index int, now time.Time) NodeEnv {
+	member := group.members[index]
 	env := NodeEnv{
 		Units:     units,
-		M:         s.samples.stats(handle.policy.measures, tag, now),
-		Traffic:   s.traffic.stats(tag, now),
-		Node:      NodeInfo{Tag: tag, Index: index, Type: node.Type()},
-		IsCurrent: current == node,
-		Domestic:  s.domesticInfo(),
+		M:         member.M,
+		Traffic:   member.Traffic,
+		Node:      NodeInfo{Tag: member.Tag, Index: index, Type: member.Type},
+		IsCurrent: member.IsCurrent,
+		Domestic:  group.domestic,
 		Now:       nowInfo(now),
-		Group:     GroupInfo{Tag: handle.group.Tag(), Size: len(handle.group.Candidates())},
+		Group:     GroupInfo{Tag: handle.group.Tag(), Size: len(group.members)},
+		Members:   group.members,
+		Peers:     group.peers,
 	}
-	if current != nil {
-		env.Group.Current = current.Tag()
+	if group.current != nil {
+		env.Group.Current = group.current.Tag()
 	}
 	s.access.RLock()
 	if env.IsCurrent && !handle.selectedAt.IsZero() {
 		env.SelectedFor = now.Sub(handle.selectedAt).Seconds()
 	}
-	if until := handle.penalties[tag]; now.Before(until) {
+	if until := handle.penalties[member.Tag]; now.Before(until) {
 		env.Penalized, env.PenaltyLeft = true, until.Sub(now).Seconds()
 	}
 	s.access.RUnlock()
 	return env
 }
 
-func (s *Service) eligible(handle *Handle, node adapter.Outbound, index int, now time.Time) bool {
-	ok, err := runBool(handle.policy.eligible, s.nodeEnv(handle, node, index, now))
+func (s *Service) eligible(handle *Handle, group *groupContext, index int, now time.Time) bool {
+	ok, err := runBool(handle.policy.eligible, s.nodeEnv(handle, group, index, now))
 	return err == nil && ok
+}
+
+// evaluateNode judges node against the group's statistics of now; ok is false
+// when node is no longer a member.
+func (s *Service) evaluateNode(handle *Handle, node adapter.Outbound) (evaluation, bool) {
+	now := time.Now()
+	group := s.groupContext(handle, now)
+	index := slices.Index(group.candidates, node)
+	if index < 0 {
+		return evaluation{}, false
+	}
+	return s.evaluate(handle, group, index, now), true
 }
 
 // evaluate judges one member by the group's policy from the stored statistics
 // and publishes the verdict.
-func (s *Service) evaluate(handle *Handle, node adapter.Outbound, index int, now time.Time) (result evaluation) {
+func (s *Service) evaluate(handle *Handle, group *groupContext, index int, now time.Time) (result evaluation) {
 	p := handle.policy
-	env := s.nodeEnv(handle, node, index, now)
+	node := group.candidates[index]
+	env := s.nodeEnv(handle, group, index, now)
 	report := Report{Time: now}
 	result = evaluation{node: node, index: index}
 	defer func() {
 		result.report = report
+		result.view = View{
+			Tag: env.Node.Tag, Index: index, Type: env.Node.Type, IsCurrent: env.IsCurrent,
+			Eligible: report.Eligible, Qualified: report.OK, HasScore: report.HasScore, Score: report.Score,
+			Penalized: env.Penalized, M: env.M, Traffic: env.Traffic,
+		}
 		s.access.Lock()
 		if handle.reports == nil {
 			handle.reports = make(map[string]Report)
@@ -781,10 +850,6 @@ func (s *Service) evaluate(handle *Handle, node adapter.Outbound, index int, now
 		}
 	}
 	report.OK = qualified && !env.Penalized
-	result.view = View{
-		Tag: node.Tag(), Index: index, Qualified: report.OK, Score: report.Score,
-		Penalized: env.Penalized, M: env.M, Traffic: env.Traffic,
-	}
 	return result
 }
 
@@ -799,16 +864,17 @@ func better(a, b evaluation) bool {
 // policy's switch expression agrees.
 func (s *Service) reselect(handle *Handle, reason string) {
 	now := time.Now()
-	candidates := handle.group.Candidates()
+	group := s.groupContext(handle, now)
+	candidates := group.candidates
 	evaluations := make([]evaluation, 0, len(candidates))
 	var best, current *evaluation
 	s.access.Lock()
 	handle.reports = make(map[string]Report, len(candidates))
 	handle.error = ""
 	s.access.Unlock()
-	currentNode := handle.group.Current()
-	for index, candidate := range candidates {
-		evaluations = append(evaluations, s.evaluate(handle, candidate, index, now))
+	currentNode := group.current
+	for index := range candidates {
+		evaluations = append(evaluations, s.evaluate(handle, group, index, now))
 	}
 	for i := range evaluations {
 		e := &evaluations[i]
@@ -832,11 +898,17 @@ func (s *Service) reselect(handle *Handle, reason string) {
 	if best == current {
 		return
 	}
+	members := make([]View, len(evaluations))
+	for i, e := range evaluations {
+		members[i] = e.view
+	}
 	switchEnv := SwitchEnv{
 		Units:    units,
 		Current:  current.view,
 		Best:     best.view,
-		Domestic: s.domesticInfo(),
+		Members:  members,
+		Peers:    group.peers,
+		Domestic: group.domestic,
 		Now:      nowInfo(now),
 		Group:    GroupInfo{Tag: handle.group.Tag(), Size: len(candidates), Current: currentNode.Tag()},
 	}
@@ -860,9 +932,7 @@ func (s *Service) check(ctx context.Context, handle *Handle, reason string, meas
 	if current == nil {
 		return
 	}
-	candidates := handle.group.Candidates()
-	index := slices.Index(candidates, current)
-	if index < 0 {
+	if !slices.Contains(handle.group.Candidates(), current) {
 		return
 	}
 	s.logger.Debug("check ", handle.group.Tag(), " (", reason, ")")
@@ -870,7 +940,10 @@ func (s *Service) check(ctx context.Context, handle *Handle, reason string, meas
 	if ctx.Err() != nil {
 		return
 	}
-	verdict := s.evaluate(handle, current, index, time.Now())
+	verdict, loaded := s.evaluateNode(handle, current)
+	if !loaded {
+		return
+	}
 	s.notify()
 	if verdict.report.OK || !s.domesticOK(ctx) {
 		return
@@ -883,11 +956,10 @@ func (s *Service) check(ctx context.Context, handle *Handle, reason string, meas
 	s.access.RUnlock()
 	type ranked struct {
 		node   adapter.Outbound
-		index  int
 		report Report
 	}
 	var order []ranked
-	for i, candidate := range candidates {
+	for _, candidate := range handle.group.Candidates() {
 		if candidate == current {
 			continue
 		}
@@ -895,7 +967,7 @@ func (s *Service) check(ctx context.Context, handle *Handle, reason string, meas
 		if loaded && !report.Eligible {
 			continue
 		}
-		order = append(order, ranked{candidate, i, report})
+		order = append(order, ranked{candidate, report})
 	}
 	slices.SortStableFunc(order, func(a, b ranked) int {
 		if a.report.OK != b.report.OK {
@@ -917,9 +989,9 @@ func (s *Service) check(ctx context.Context, handle *Handle, reason string, meas
 			return
 		}
 		s.measureFor(ctx, p, candidate.node, measured)
-		e := s.evaluate(handle, candidate.node, candidate.index, time.Now())
+		e, loaded := s.evaluateNode(handle, candidate.node)
 		s.notify()
-		if e.report.OK {
+		if loaded && e.report.OK {
 			s.choose(handle, candidate.node, "check ("+reason+"): "+current.Tag()+" disqualified: "+verdict.report.Error)
 			return
 		}

@@ -172,6 +172,26 @@ func TestScreenSelectsLowestScoreAmongQualified(t *testing.T) {
 	}
 }
 
+func TestQualifyRelativeToPeers(t *testing.T) {
+	t.Parallel()
+	// The same pacing for everyone: a fixed threshold would pass or fail all.
+	a := &node{tag: "a", addr: server(t, 20*time.Millisecond)}
+	b := &node{tag: "b", addr: server(t, 20*time.Millisecond)}
+	slow := &node{tag: "slow", addr: server(t, 150*time.Millisecond)}
+	g := &group{candidates: []adapter.Outbound{slow, a, b}, current: slow}
+	s, handle := newTestService(t, option.NodeProbePolicyOptions{
+		Qualify: "peers.bulk.ok == 3 && m.bulk.throughput.p50 >= peers.bulk.throughput.max * 0.5",
+		Switch:  "len(filter(members, .qualified)) == 2",
+	}, g)
+	screen(s)
+	if g.Current() != a {
+		t.Fatalf("selected %v, want a", g.Current())
+	}
+	if report := handle.Snapshot().Reports["slow"]; report.OK || report.Error != "qualify: m.bulk.throughput.p50 >= peers.bulk.throughput.max * 0.5" {
+		t.Fatalf("slow report: %+v", report)
+	}
+}
+
 func TestSwitchExpressionGatesReplacement(t *testing.T) {
 	t.Parallel()
 	a := &node{tag: "a", addr: server(t, 0)}
@@ -288,6 +308,7 @@ func TestConfigurationErrors(t *testing.T) {
 		{"unknown measure in switch view", option.NodeProbePolicyOptions{Switch: "best.m.nope.count > 0"}, "unknown measure: nope"},
 		{"non-boolean qualify", option.NodeProbePolicyOptions{Qualify: "m.bulk.count"}, "qualify"},
 		{"unknown variable", option.NodeProbePolicyOptions{Score: "latency"}, "score"},
+		{"unknown measure in peers", option.NodeProbePolicyOptions{Qualify: "peers.nope.ok > 0"}, "unknown measure: nope"},
 		{"unknown screen measure", option.NodeProbePolicyOptions{Screen: &option.NodeProbeScreenOptions{Measures: []string{"x"}}}, "unknown measure: x"},
 	} {
 		_, err := newService(log.NewNOPFactory().Logger(), "probe", testOptions(testCase.policy), nil)

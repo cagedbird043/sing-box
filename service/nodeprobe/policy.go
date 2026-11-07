@@ -262,8 +262,8 @@ func compile(policyName, name, source string, env any, expect expr.Option, measu
 	return program, nil
 }
 
-// measureChecker rejects m.<name> for undefined measures, which would
-// otherwise read as an empty window at run time.
+// measureChecker rejects m.<name> and peers.<name> for undefined measures,
+// which would otherwise read as empty at run time.
 type measureChecker struct {
 	measures map[string]*measure
 	unknown  string
@@ -286,7 +286,7 @@ func (c *measureChecker) Visit(node *ast.Node) {
 func isMeasureMap(node ast.Node) bool {
 	switch typed := node.(type) {
 	case *ast.IdentifierNode:
-		return typed.Value == "m"
+		return typed.Value == "m" || typed.Value == "peers"
 	case *ast.MemberNode:
 		property, isString := typed.Property.(*ast.StringNode)
 		return isString && property.Value == "m"
