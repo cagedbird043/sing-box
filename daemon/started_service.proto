@@ -121,6 +121,32 @@ message Group {
   string selected = 4;
   bool isExpand = 5;
   repeated GroupItem items = 6;
+  // Set for a probe group.
+  ProbeGroup probe = 7;
+}
+
+message ProbeGroup {
+  reserved 1, 2;
+  // Unix milliseconds of the last screening attempt's completion; 0 if none.
+  int64 screenedAt = 3;
+  bool running = 4;
+  // Increments after every screening attempt of the group's policy, including skipped or failed ones.
+  uint64 generation = 5;
+  string error = 6;
+  string policy = 7;
+  // Effective sources in order: eligible, qualify, score, switch, penalty.
+  repeated ProbeExpression expressions = 8;
+  repeated string screenMeasures = 9;
+  repeated string checkMeasures = 10;
+  // Unix milliseconds the current member was chosen by the policy; 0 if unknown.
+  int64 selectedAt = 11;
+  string switchReason = 12;
+  int64 trafficWindowMs = 13;
+}
+
+message ProbeExpression {
+  string name = 1;
+  string source = 2;
 }
 
 message GroupItem {
@@ -130,6 +156,61 @@ message GroupItem {
   int32 urlTestDelay = 4;
   // Hash of the node's type and options, excluding its tag; empty if unknown.
   string fingerprint = 5;
+  // Latest node-probe measurement; set for members of a probe group.
+  ProbeReport probe = 6;
+}
+
+message ProbeReport {
+  reserved 2, 3, 6;
+  // Unix milliseconds of the latest evaluation; 0 if never evaluated.
+  int64 time = 1;
+  // Qualified and not penalized.
+  bool ok = 4;
+  // Why the member does not qualify, or an evaluation error; empty when ok.
+  string error = 5;
+  bool eligible = 7;
+  bool hasScore = 8;
+  double score = 9;
+  // Unix milliseconds; 0 without a penalty.
+  int64 penaltyUntil = 10;
+  repeated ProbeMeasureStats measures = 11;
+  ProbeTrafficStats traffic = 12;
+}
+
+message ProbeMeasureStats {
+  string name = 1;
+  int32 count = 2;
+  double okRate = 3;
+  // Unix milliseconds of the latest sample; 0 without one.
+  int64 lastTime = 4;
+  bool lastOk = 5;
+  string lastError = 6;
+  ProbeDistribution firstByteMs = 7;
+  ProbeDistribution transferMs = 8;
+  ProbeDistribution totalMs = 9;
+  // Bytes per second.
+  ProbeDistribution throughput = 10;
+  // download or request.
+  string kind = 11;
+}
+
+// Summary of the successful samples in a window; zero without one.
+message ProbeDistribution {
+  double last = 1;
+  double p50 = 2;
+  double p90 = 3;
+  double min = 4;
+  double max = 5;
+}
+
+message ProbeTrafficStats {
+  int32 conns = 1;
+  int32 dialFailed = 2;
+  int32 aborted = 3;
+  double failRate = 4;
+  int64 bytesDown = 5;
+  int64 bytesUp = 6;
+  int32 ok = 7;
 }
 
 message URLTestRequest {

@@ -43,6 +43,7 @@ import (
 	providerLocal "github.com/sagernet/sing-box/provider/local"
 	"github.com/sagernet/sing-box/provider/remote"
 	"github.com/sagernet/sing-box/service/api"
+	"github.com/sagernet/sing-box/service/nodeprobe"
 	originca "github.com/sagernet/sing-box/service/origin_ca"
 	"github.com/sagernet/sing-box/service/resolved"
 	"github.com/sagernet/sing-box/service/ssmapi"
@@ -100,6 +101,7 @@ func OutboundRegistry() *outbound.Registry {
 
 	group.RegisterSelector(registry)
 	group.RegisterURLTest(registry)
+	group.RegisterProbe(registry)
 
 	socks.RegisterOutbound(registry)
 	http.RegisterOutbound(registry)
@@ -162,6 +164,7 @@ func ServiceRegistry() *service.Registry {
 	api.RegisterService(registry)
 	resolved.RegisterService(registry)
 	ssmapi.RegisterService(registry)
+	nodeprobe.RegisterService(registry)
 
 	registerQUICServices(registry)
 	registerDERPService(registry)

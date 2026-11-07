@@ -30,6 +30,20 @@ unchanged.
 Subscription URLs may contain credentials. Clients should hide them by default
 and reveal or copy them only on explicit user action; do not write them to logs.
 
+### Probe groups
+
+A `probe` group names a `node-probe` service (`probe`) and one of its `policy` entries. The service measures members through each of them (`measures`: `download` with a ranged body of `bytes`, or `request` where any HTTP response counts), keeps the latest `window` samples per member and measure, and counts the routed connections each probe group carried through each member over `traffic_window`. The policy's expressions ([expr](https://expr-lang.org/) language, compiled and type-checked at load) decide `eligible`, `qualify`, `score` (lower is better), `switch` and `penalty` (seconds). Unknown measures, unknown variables and wrong result types fail `sing-box check`.
+
+A screening (startup, `screen.interval`, network changes with `screen.on_network_change`, or `URLTest`) measures every eligible member, evaluates all of them, and selects the best qualified, unpenalized member when the group has no current member or the current one is ineligible, or when `switch` holds. A check (`check.interval`, or a failed connection through the current member with `check.on_traffic_failure`, at most once per `check.cooldown`) measures only the current member; when it no longer qualifies, other members are measured in score order and the first that qualifies is selected. Nothing is selected before it qualifies. With `domestic` configured, a failed direct fetch skips judging and switching.
+
+Expression variables (durations in seconds, throughput in bytes per second): `m.<measure>` with `count`, `ok_rate`, `fail_streak`, `age`, `last_ok`, `last_error`, `first_byte`/`transfer`/`total`/`throughput` each as `last`/`p50`/`p90`/`min`/`max`/`mean`, and `targets["<url>"]` with the same fields per target; `traffic` with `conns`, `ok`, `dial_failed`, `aborted`, `fail_rate`, `bytes_down`, `bytes_up`, `last_failure_age`; `node` (`tag`, `index`, `type`); `is_current`, `selected_for`, `penalized`, `penalty_left`; `domestic` (`ok`, `configured`); `now` (`hour`, `minute`, `weekday`, `unix`, local time); `group` (`tag`, `size`, `current`); and the constants `ms`, `s`, `minute`, `hour`, `KiB`, `MiB`. `penalty` also sees `qualified` and `score`. `switch` sees `current` and `best`, each with `tag`, `index`, `qualified`, `score`, `penalized`, `m` and `traffic`, plus `domestic`, `now`, `group` and the constants. Defaults: eligible `true`, qualify `true`, score `node.index`, switch `!current.qualified || best.score < current.score`, penalty `0`.
+
+`StartedService.SubscribeGroups` includes `Group.probe` for `probe` groups: `policy`, the effective `expressions` (eligible, qualify, score, switch, penalty), `screenMeasures`, `checkMeasures`, `selectedAt`, `switchReason`, `trafficWindowMs`, `running`, `generation`, `screenedAt`, and `error`.
+
+Calling `StartedService.URLTest` for a probe group requests a screening of its policy. Queued or running requests coalesce. Start and completion publish updates even without selection changes. Every attempt increments `generation`, clears `running`, and updates `screenedAt` (Unix milliseconds), including offline, paused, cancelled, or skipped attempts. Capture the previous `generation`, wait for `running == false` with a greater `generation`, and display nonempty `error`.
+
+`GroupItem.probe` is absent for a member that has neither an evaluation, a sample, nor a counted connection. Otherwise it contains the latest verdict (`time`, `eligible`, `ok` = qualified and not penalized, `error` naming the failing qualify clause or evaluation error, `hasScore`, `score`, `penaltyUntil`), per-measure statistics (`measures`: `count`, `okRate`, `lastTime`, `lastOk`, `lastError`, and `last/p50/p90/min/max` of `firstByteMs`, `transferMs`, `totalMs` and `throughput` in bytes per second over successful samples), and `traffic` (`conns`, `ok`, `dialFailed`, `aborted`, `failRate`, `bytesDown`, `bytesUp`) within the traffic window.
+
 ### Structure
 
 ```json
