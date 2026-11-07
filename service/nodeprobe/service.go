@@ -129,6 +129,8 @@ type Service struct {
 	rounds       map[string]int
 	domesticAt   time.Time
 	domesticPass bool
+	// Set when a sample was dropped because its member was replaced meanwhile.
+	replaced atomic.Bool
 }
 
 func NewService(ctx context.Context, logger log.ContextLogger, tag string, options option.NodeProbeServiceOptions) (adapter.Service, error) {
@@ -515,6 +517,12 @@ func (s *Service) measureNode(ctx context.Context, m *measure, node adapter.Outb
 			measured := fetch(ctx, node, target, size, m.timeout)
 			r := record{time: time.Now(), target: target, firstByte: measured.firstByte, transfer: measured.transfer, bytes: measured.bytes}
 			if measured.err != nil {
+				if !s.live(node) {
+					// A provider refresh replaced and closed this member mid-measure;
+					// the failure says nothing about the node behind the tag.
+					s.replaced.Store(true)
+					return
+				}
 				r.err = measured.err.Error()
 				s.logger.Debug(m.name, " ", node.Tag(), ": ", measured.err)
 			} else {
@@ -523,6 +531,16 @@ func (s *Service) measureNode(ctx context.Context, m *measure, node adapter.Outb
 			s.samples.add(m.name, node.Tag(), m.window, r)
 		}
 	}
+}
+
+// live reports whether node is still a member of some group.
+func (s *Service) live(node adapter.Outbound) bool {
+	for _, handle := range s.handles() {
+		if slices.Contains(handle.group.Candidates(), node) {
+			return true
+		}
+	}
+	return false
 }
 
 // measureAll runs one measure through nodes with the measure's concurrency.
@@ -629,6 +647,7 @@ func (s *Service) screen(ctx context.Context, policies []*policy, reason string)
 		names = append(names, name)
 	}
 	slices.Sort(names)
+	s.replaced.Store(false)
 	for _, name := range names {
 		if ctx.Err() != nil {
 			return
@@ -638,6 +657,12 @@ func (s *Service) screen(ctx context.Context, policies []*policy, reason string)
 		s.rounds[name]++
 	}
 	if ctx.Err() != nil {
+		return
+	}
+	if s.replaced.Swap(false) {
+		// Members were replaced mid-screening: measure the new ones before judging.
+		s.logger.Info("screen (", reason, "): members replaced during measurement, measuring again")
+		s.screen(ctx, policies, reason+", members replaced")
 		return
 	}
 	for _, handle := range handles {

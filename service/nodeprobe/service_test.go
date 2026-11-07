@@ -26,6 +26,10 @@ type node struct {
 	tag    string
 	access sync.Mutex
 	addr   string
+	// When set, dials wait for it to close and then fail, like a member
+	// closed by a provider refresh mid-dial.
+	closed chan struct{}
+	dialed chan struct{}
 }
 
 func (n *node) Type() string           { return "test" }
@@ -40,6 +44,11 @@ func (n *node) set(addr string) {
 }
 
 func (n *node) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if n.closed != nil {
+		close(n.dialed)
+		<-n.closed
+		return nil, net.ErrClosed
+	}
 	n.access.Lock()
 	addr := n.addr
 	n.access.Unlock()
@@ -285,5 +294,31 @@ func TestConfigurationErrors(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), testCase.want) {
 			t.Errorf("%s: error %v, want %q", testCase.name, err, testCase.want)
 		}
+	}
+}
+
+func TestReplacedMemberFailuresAreDiscarded(t *testing.T) {
+	t.Parallel()
+	old := &node{tag: "a", closed: make(chan struct{}), dialed: make(chan struct{})}
+	fresh := &node{tag: "a", addr: server(t, 0)}
+	g := &group{candidates: []adapter.Outbound{old}}
+	s, handle := newTestService(t, option.NodeProbePolicyOptions{Qualify: "m.bulk.ok_rate == 1"}, g)
+	done := make(chan struct{})
+	go func() {
+		screen(s)
+		close(done)
+	}()
+	// A provider refresh swaps the member, then closes the old one mid-dial.
+	<-old.dialed
+	g.access.Lock()
+	g.candidates = []adapter.Outbound{fresh}
+	g.access.Unlock()
+	close(old.closed)
+	<-done
+	if g.Current() != fresh {
+		t.Fatalf("selected %v, want the replacement", g.Current())
+	}
+	if stats := handle.Snapshot().Measures["a"]["bulk"]; stats.Count != 1 || stats.OKRate != 1 {
+		t.Fatalf("stats %+v: the replaced member's failure was recorded", stats)
 	}
 }
