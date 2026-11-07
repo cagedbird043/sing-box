@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	runtimeDebug "runtime/debug"
+	"slices"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/sagernet/sing-box/experimental/locale"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/protocol/group"
+	"github.com/sagernet/sing-box/service/nodeprobe"
 	"github.com/sagernet/sing-box/service/oomkiller"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/memory"
@@ -605,13 +607,40 @@ func (s *StartedService) readGroups() *Groups {
 		g.Tag = iGroup.Tag()
 		g.Type = iGroup.Type()
 		_, g.Selectable = iGroup.(*group.Selector)
-		if selected := iGroup.Selected(N.NetworkTCP); selected != nil {
-			g.Selected = selected.Tag()
-		}
 		if boxService.cacheFile != nil {
 			if isExpand, loaded := boxService.cacheFile.LoadGroupExpand(g.Tag); loaded {
 				g.IsExpand = isExpand
 			}
+		}
+		var probeHandle *nodeprobe.Handle
+		var probeSnapshot nodeprobe.Snapshot
+		if probeGroup, isProbe := iGroup.(*group.Probe); isProbe {
+			probeHandle = probeGroup.ProbeHandle()
+		}
+		if probeHandle != nil {
+			probeSnapshot = probeHandle.Snapshot()
+			g.Probe = &ProbeGroup{
+				Running:         probeSnapshot.Running,
+				Generation:      probeSnapshot.Generation,
+				Error:           probeSnapshot.Error,
+				Policy:          probeSnapshot.Policy,
+				ScreenMeasures:  probeSnapshot.ScreenMeasures,
+				CheckMeasures:   probeSnapshot.CheckMeasures,
+				SwitchReason:    probeSnapshot.SwitchReason,
+				TrafficWindowMs: probeSnapshot.TrafficWindow.Milliseconds(),
+			}
+			for _, expression := range probeSnapshot.Expressions {
+				g.Probe.Expressions = append(g.Probe.Expressions, &ProbeExpression{Name: expression.Name, Source: expression.Source})
+			}
+			if !probeSnapshot.ScreenedAt.IsZero() {
+				g.Probe.ScreenedAt = probeSnapshot.ScreenedAt.UnixMilli()
+			}
+			if !probeSnapshot.SelectedAt.IsZero() {
+				g.Probe.SelectedAt = probeSnapshot.SelectedAt.UnixMilli()
+			}
+		}
+		if selected := iGroup.Selected(N.NetworkTCP); selected != nil {
+			g.Selected = selected.Tag()
 		}
 
 		for _, itemTag := range iGroup.All() {
@@ -637,6 +666,9 @@ func (s *StartedService) readGroups() *Groups {
 				item.UrlTestTime = history.Time.Unix()
 				item.UrlTestDelay = int32(history.Delay)
 			}
+			if probeHandle != nil {
+				item.Probe = probeReport(probeSnapshot, itemTag)
+			}
 			g.Items = append(g.Items, &item)
 		}
 		if len(g.Items) == 0 {
@@ -645,6 +677,72 @@ func (s *StartedService) readGroups() *Groups {
 		gs.Group = append(gs.Group, &g)
 	}
 	return &gs
+}
+
+// probeReport maps a member's evaluation and statistics; nil when the member
+// has neither, which means unchecked, not failed.
+func probeReport(snapshot nodeprobe.Snapshot, tag string) *ProbeReport {
+	report, evaluated := snapshot.Reports[tag]
+	measures := snapshot.Measures[tag]
+	traffic := snapshot.Traffic[tag]
+	var sampled bool
+	for _, stats := range measures {
+		sampled = sampled || stats.Count > 0
+	}
+	if !evaluated && !sampled && traffic.Conns == 0 {
+		return nil
+	}
+	item := &ProbeReport{
+		Ok:       report.OK,
+		Error:    report.Error,
+		Eligible: report.Eligible,
+		HasScore: report.HasScore,
+		Score:    report.Score,
+		Traffic: &ProbeTrafficStats{
+			Conns:      int32(traffic.Conns),
+			Ok:         int32(traffic.OK),
+			DialFailed: int32(traffic.DialFailed),
+			Aborted:    int32(traffic.Aborted),
+			FailRate:   traffic.FailRate,
+			BytesDown:  traffic.BytesDown,
+			BytesUp:    traffic.BytesUp,
+		},
+	}
+	if evaluated {
+		item.Time = report.Time.UnixMilli()
+	}
+	if !report.PenaltyUntil.IsZero() {
+		item.PenaltyUntil = report.PenaltyUntil.UnixMilli()
+	}
+	names := make([]string, 0, len(measures))
+	for name := range measures {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		stats := measures[name]
+		measure := &ProbeMeasureStats{
+			Name:        name,
+			Kind:        snapshot.MeasureKinds[name],
+			Count:       int32(stats.Count),
+			OkRate:      stats.OKRate,
+			LastOk:      stats.LastOK,
+			LastError:   stats.LastError,
+			FirstByteMs: probeDistribution(stats.FirstByte, 1000),
+			TransferMs:  probeDistribution(stats.Transfer, 1000),
+			TotalMs:     probeDistribution(stats.Total, 1000),
+			Throughput:  probeDistribution(stats.Throughput, 1),
+		}
+		if !stats.LastTime.IsZero() {
+			measure.LastTime = stats.LastTime.UnixMilli()
+		}
+		item.Measures = append(item.Measures, measure)
+	}
+	return item
+}
+
+func probeDistribution(dist nodeprobe.Dist, scale float64) *ProbeDistribution {
+	return &ProbeDistribution{Last: dist.Last * scale, P50: dist.P50 * scale, P90: dist.P90 * scale, Min: dist.Min * scale, Max: dist.Max * scale}
 }
 
 func outboundFingerprint(manager adapter.OutboundManager, tag string) string {
@@ -748,10 +846,14 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 	if !isLoaded {
 		return nil, status.Error(codes.NotFound, "outbound not found: "+outboundTag)
 	}
-	urlTest, isURLTest := outbound.(*group.URLTest)
-	if isURLTest {
-		go urlTest.CheckOutbounds()
-	} else {
+	switch typedGroup := outbound.(type) {
+	case *group.URLTest:
+		go typedGroup.CheckOutbounds()
+	case *group.Probe:
+		if handle := typedGroup.ProbeHandle(); handle != nil {
+			handle.Screen()
+		}
+	default:
 		go group.URLTestMembers(boxService.ctx, boxService.outboundManager, boxService.urlTestHistoryStorage, boxService.logFactory.Logger(), []adapter.Outbound{outbound})
 	}
 	return &emptypb.Empty{}, nil
