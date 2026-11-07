@@ -14,6 +14,22 @@ Android (via the Remote Control feature), or the
 
 The server also accepts [gRPC-Web](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-WEB.md) requests.
 
+### ProviderService
+
+The native `daemon.ProviderService` uses the same API listener, transports, and Bearer
+authentication as the other sing-box API methods. Configure a non-empty `secret` to
+protect subscription information.
+
+`ListProviders`, `GetProvider`, and `SubscribeProviders` return a `Provider.url`
+field (protobuf field 7). For remote providers this is the exact configured
+subscription URL; for local and inline providers it is empty. Provider responses
+do not expose request headers, local file paths, or other provider configuration.
+Existing subscription traffic, expiry, node, refresh, and health-check fields are
+unchanged.
+
+Subscription URLs may contain credentials. Clients should hide them by default
+and reveal or copy them only on explicit user action; do not write them to logs.
+
 ### Structure
 
 ```json

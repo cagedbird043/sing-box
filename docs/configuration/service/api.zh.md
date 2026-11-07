@@ -12,6 +12,17 @@ sing-box API 服务是用于观察与控制正在运行的 sing-box 实例的 gR
 
 服务器同时接受 [gRPC-Web](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-WEB.md) 请求。
 
+### ProviderService
+
+原生 `daemon.ProviderService` 与其他 sing-box API 方法共用监听器、传输和 Bearer 认证。
+请配置非空 `secret` 以保护订阅信息。
+
+`ListProviders`、`GetProvider` 和 `SubscribeProviders` 返回的 `Provider.url`
+字段（protobuf 字段号 7）对远程提供商返回原配置中的完整订阅 URL，对本地和内联提供商返回空字符串。
+响应不包含请求头、本地文件路径或其他提供商配置。已有的订阅流量、到期时间、节点、刷新和健康检查字段保持不变。
+
+订阅 URL 可能包含凭据。客户端应默认隐藏，仅在用户明确操作时查看或复制，不得将其写入日志。
+
 ### 结构
 
 ```json
