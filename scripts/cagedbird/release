@@ -394,7 +394,10 @@ def publish(src, scratch, out, version, commit, dry_run):
             f"标签已存在：{tag}")
     run("git", "tag", "-a", tag, commit, "-m", f"发布 {version}")
     run("git", "push", "--no-follow-tags", f"--force-with-lease={ref}:", "origin", f"{ref}:{ref}")
-    notes = f"cagedbird 本机构建\n\n- 分支：cagedbird/alpha\n- 提交：{commit}\n- Android APK 使用稳定签名。"
+    notes = (
+        f"[安装、迁移和日常使用](https://github.com/{REPO}/blob/{tag}/FORK.md#系统服务)\n\n"
+        f"cagedbird 本机构建\n\n- 分支：cagedbird/alpha\n- 提交：{commit}\n- Android APK 使用稳定签名。"
+    )
     run("gh", "release", "create", tag, *(out / name for name in assets), "-R", REPO,
         "--verify-tag", "--prerelease", "--latest=false", "--title", version, "--notes", notes)
     release = json.loads(run("gh", "api", f"repos/{REPO}/releases/tags/{tag}", capture=True))
