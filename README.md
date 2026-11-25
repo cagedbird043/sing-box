@@ -28,6 +28,28 @@ fork's key, so an installed official SFA must be uninstalled first. If Obtainium
 that it cannot reconcile version formats, it switches version detection off and keeps
 updating by release tag.
 
+## System service with remote configuration (cagedbird)
+
+Linux, macOS and Windows use the same command, run as root or from an elevated
+Administrator prompt:
+
+```sh
+sudo sing-box service install --config-url <URL>
+```
+
+This stores the URL in a private `config-url` file next to `config.json`, pulls the
+configuration once, then registers and starts the OS service (systemd, a launchd
+LaunchDaemon, or a Windows service). The service pulls again every 30 minutes;
+a changed configuration that passes `sing-box check` is reloaded in place, and a
+failed pull keeps the current one. The URL is never logged.
+
+- `sudo sing-box update`: pull now, reload, then refresh every subscription provider.
+- `sing-box service status` / `sudo sing-box service uninstall`.
+
+On Linux the existing `/etc/sing-box/config-url` is reused, so `--config-url` may be
+omitted. On macOS stop a Homebrew-managed service first (`sudo brew services stop
+sing-box-cagedbird`).
+
 ## License
 
 ```

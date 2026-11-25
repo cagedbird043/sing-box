@@ -5,6 +5,7 @@ import (
 
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/service"
 
 	"github.com/spf13/cobra"
@@ -31,7 +32,11 @@ func check() error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(service.ExtendContext(globalCtx))
+	return checkOptions(globalCtx, options)
+}
+
+func checkOptions(parent context.Context, options option.Options) error {
+	ctx, cancel := context.WithCancel(service.ExtendContext(parent))
 	instance, err := box.New(box.Options{
 		Context: ctx,
 		Options: options,

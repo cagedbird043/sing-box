@@ -24,11 +24,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	runSyncConfig   bool
+	runSyncInterval time.Duration
+	runServiceName  string
+)
+
 var commandRun = &cobra.Command{
 	Use:   "run",
 	Short: "Run service",
 	Run: func(cmd *cobra.Command, args []string) {
-		err := run()
+		err := runPlatform()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -37,6 +43,9 @@ var commandRun = &cobra.Command{
 
 func init() {
 	mainCommand.AddCommand(commandRun)
+	commandRun.Flags().BoolVar(&runSyncConfig, "sync-config", false, "Sync the configuration from the adjacent private config-url file")
+	commandRun.Flags().DurationVar(&runSyncInterval, "sync-interval", defaultConfigSyncInterval, "Remote configuration sync interval")
+	commandRun.Flags().StringVar(&runServiceName, "service-name", defaultManagedServiceName, "Managed service name")
 }
 
 type OptionsEntry struct {
@@ -58,7 +67,11 @@ func readConfigAt(path string) (*OptionsEntry, error) {
 	if err != nil {
 		return nil, E.Cause(err, "read config at ", path)
 	}
-	options, err := json.UnmarshalExtendedContext[option.Options](globalCtx, configContent)
+	return decodeConfigAt(globalCtx, configContent, path)
+}
+
+func decodeConfigAt(ctx context.Context, configContent []byte, path string) (*OptionsEntry, error) {
+	options, err := json.UnmarshalExtendedContext[option.Options](ctx, configContent)
 	if err != nil {
 		return nil, E.Cause(err, "decode config at ", path)
 	}
@@ -130,7 +143,7 @@ func mergeOptionsList(optionsList []*OptionsEntry) (option.Options, error) {
 	return mergedOptions, nil
 }
 
-func create(options option.Options) (*box.Box, context.CancelFunc, io.Closer, error) {
+func create(runContext context.Context, options option.Options) (*box.Box, context.CancelFunc, io.Closer, error) {
 	if disableColor {
 		if options.Log == nil {
 			options.Log = &option.LogOptions{}
@@ -156,11 +169,15 @@ func create(options option.Options) (*box.Box, context.CancelFunc, io.Closer, er
 	}()
 	startCtx, finishStart := context.WithCancel(context.Background())
 	go func() {
-		_, loaded := <-osSignals
-		if loaded {
-			cancel()
-			closeMonitor(startCtx)
+		select {
+		case _, loaded := <-osSignals:
+			if !loaded {
+				return
+			}
+		case <-runContext.Done():
 		}
+		cancel()
+		closeMonitor(startCtx)
 	}()
 	err = instance.Start()
 	finishStart()
@@ -177,40 +194,79 @@ func create(options option.Options) (*box.Box, context.CancelFunc, io.Closer, er
 	return instance, cancel, dnsController, nil
 }
 
-func run() error {
-	optionsList, err := readConfig()
+func run(ctx context.Context, pulls <-chan struct{}, started func()) error {
+	syncer, err := prepareRunConfigSync(ctx)
 	if err != nil {
 		return err
+	}
+	optionsList, err := readConfig()
+	if err != nil {
+		return syncer.redact(err)
 	}
 	options, err := mergeOptionsList(optionsList)
 	if err != nil {
-		return err
+		return syncer.redact(err)
 	}
 	err = runInUserNamespaceIfNeeded(options, optionsList)
 	if err != nil {
-		return err
+		return syncer.redact(err)
 	}
 	osSignals := make(chan os.Signal, 1)
 	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(osSignals)
+	reload := pulls
+	if syncer != nil {
+		stopWatch := syncer.startWatch(ctx, pulls, optionsList[0].content)
+		defer stopWatch()
+		reload = syncer.reload
+	}
 	for {
-		instance, cancel, dnsController, createErr := create(options)
+		if ctx.Err() != nil {
+			return nil
+		}
+		instance, cancel, dnsController, createErr := create(ctx, options)
 		if createErr != nil {
-			return createErr
+			if ctx.Err() != nil {
+				return nil
+			}
+			return syncer.redact(createErr)
+		}
+		if syncer != nil {
+			syncer.publish()
+		}
+		if started != nil {
+			started()
+			started = nil
 		}
 		runtimeDebug.FreeOSMemory()
 		for {
-			osSignal := <-osSignals
-			if osSignal == syscall.SIGHUP {
-				err = check()
-				if err != nil {
-					log.Error(E.Cause(err, "reload service"))
+			var reloading bool
+			select {
+			case <-ctx.Done():
+			case osSignal := <-osSignals:
+				reloading = osSignal == syscall.SIGHUP
+			case <-reload:
+				reloading = true
+			}
+			var next option.Options
+			if reloading {
+				if syncer != nil {
+					entry, checkErr := syncer.next()
+					if checkErr != nil {
+						log.Error("reload service: ", syncer.redact(checkErr))
+					}
+					if entry == nil {
+						continue
+					}
+					next = entry.options
+				} else if checkErr := check(); checkErr != nil {
+					log.Error(E.Cause(checkErr, "reload service"))
 					continue
 				}
 			}
 			if dnsController != nil {
 				if closeErr := dnsController.Close(); closeErr != nil {
-					log.Error(E.Cause(closeErr, "restore Darwin DNS"))
+					log.Error(E.Cause(syncer.redact(closeErr), "restore Darwin DNS"))
 				}
 			}
 			cancel()
@@ -218,17 +274,22 @@ func run() error {
 			go closeMonitor(closeCtx)
 			err = instance.Close()
 			closed()
-			if osSignal != syscall.SIGHUP {
+			if !reloading {
 				if err != nil {
-					log.Error(E.Cause(err, "sing-box did not closed properly"))
+					log.Error(E.Cause(syncer.redact(err), "sing-box did not close properly"))
 				}
 				return nil
 			}
+			if syncer != nil {
+				options = next
+			}
 			break
 		}
-		options, err = readConfigAndMerge()
-		if err != nil {
-			return err
+		if syncer == nil {
+			options, err = readConfigAndMerge()
+			if err != nil {
+				return err
+			}
 		}
 	}
 }
