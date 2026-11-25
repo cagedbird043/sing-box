@@ -2,6 +2,8 @@
 
 本文件通过 `.omp/config.yml` 的 `contextFiles.extra` 注入会话上下文，与上游规则并列生效；两者冲突时以本文件为准。
 
+要安装或更新，直接看下面的[系统服务](#系统服务)。
+
 ## 仓库与分支
 
 - 源仓库固定为 `cagedbird043/sing-box`，不向 SagerNet 推送或发布。remote：`origin` = fork，`upstream` = `SagerNet/sing-box`，`ref1nd` = `reF1nd/sing-box`（仅参考）。
@@ -51,10 +53,16 @@ GOTOOLCHAIN=go1.26.6 go build -ldflags "$(cat release/LDFLAGS)" -tags "$(cat rel
 
 ## 系统服务
 
-以管理员权限运行 `sing-box service install --config-url <URL>`。先用原服务管理器停掉正在运行的旧服务；新服务默认名为 `sing-box-managed`。
-二进制、配置和数据目录须由管理员管理。macOS 的 Homebrew 前缀如果可被普通用户写入，先把二进制部署到管理员管理的固定目录，再安装服务；升级后同步更新该二进制。
+先在 [GitHub Releases](https://github.com/cagedbird043/sing-box/releases) 下载对应平台的包，或从 AUR（`sing-box-cagedbird-bin`）/ Homebrew（`cagedbird043/tap/sing-box-cagedbird`）安装已发布版本。
 
-新配置校验通过后会重启 `sing-box run`，连接可能短暂中断；`sing-box update` 可立即拉取并刷新订阅。
+- **Linux**：用 AUR 安装的 `sing-box`，或解压后执行 `sudo install -Dm755 ./sing-box /usr/local/bin/sing-box`。执行 `sudo sing-box service install --config-url '你的配置地址'`（用压缩包时，把命令中的 `sing-box` 换成 `/usr/local/bin/sing-box`）。已有 `/etc/sing-box/config-url` 就省略 `--config-url`。
+- **macOS**：解压 arm64 包后执行 `sudo install -o root -g wheel -m 0755 ./sing-box /Library/PrivilegedHelperTools/sing-box`。从 Homebrew 安装时，把 `./sing-box` 换成 `"$(brew --prefix sing-box-cagedbird)/bin/sing-box"`。再执行 `sudo /Library/PrivilegedHelperTools/sing-box service install --config-url '你的配置地址'`。默认配置目录为 `/etc/sing-box`。升级时更新这份固定路径的二进制，再执行一次 `service install`，不用重填地址。
+- **Windows**：解压 x64 或 ARM64 ZIP，用管理员 PowerShell 把 `sing-box.exe` 放进 `C:\Program Files\sing-box\`。执行 `& "$env:ProgramFiles\sing-box\sing-box.exe" service install --config-url '你的配置地址'`。
+- **Android**：安装 SFA APK，在应用里导入配置，不用安装系统服务。
+
+**从旧服务迁移**：先核对新版二进制能运行，再用原服务管理器停用旧服务，避免两个服务抢 TUN 和端口。新版默认服务名为 `sing-box-managed`。在 macOS 上，普通用户可写的 Homebrew 前缀不能作为新系统服务的二进制、配置或数据路径；迁移时先把要保留的配置和状态放到管理员管理的目录，不要直接把 `-C` / `-D` 指回该前缀。
+
+**平时怎么用**：`sing-box service status` 看状态；用管理员权限执行 `sing-box update` 立即拉取并刷新订阅，或执行 `sing-box service uninstall` 移除服务（保留配置和数据）。如果安装时用了二进制的完整路径，平时也用同一路径。服务会自动拉取配置；有效变更会重启子进程，连接可能短暂中断。
 
 ## Android 设备
 
