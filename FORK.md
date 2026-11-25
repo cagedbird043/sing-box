@@ -57,7 +57,7 @@ GOTOOLCHAIN=go1.26.6 go build -ldflags "$(cat release/LDFLAGS)" -tags "$(cat rel
 
 - **Linux**：用 AUR 安装的 `sing-box`，或解压后执行 `sudo install -Dm755 ./sing-box /usr/local/bin/sing-box`。执行 `sudo sing-box service install --config-url '你的配置地址'`（用压缩包时，把命令中的 `sing-box` 换成 `/usr/local/bin/sing-box`）。已有 `/etc/sing-box/config-url` 就省略 `--config-url`。
 - **macOS**：解压 arm64 包后执行 `sudo install -o root -g wheel -m 0755 ./sing-box /Library/PrivilegedHelperTools/sing-box`。从 Homebrew 安装时，把 `./sing-box` 换成 `"$(brew --prefix sing-box-cagedbird)/bin/sing-box"`。再执行 `sudo /Library/PrivilegedHelperTools/sing-box service install --config-url '你的配置地址'`。默认配置目录为 `/etc/sing-box`。升级时更新这份固定路径的二进制，再执行一次 `service install`，不用重填地址。
-- **Windows**：解压 x64 或 ARM64 ZIP，用管理员 PowerShell 把 `sing-box.exe` 放进 `C:\Program Files\sing-box\`。执行 `& "$env:ProgramFiles\sing-box\sing-box.exe" service install --config-url '你的配置地址'`。
+- **Windows x64**：解压 `sing-box-cagedbird-windows-amd64.zip`，用管理员 PowerShell 把 `sing-box.exe` 放进 `C:\Program Files\sing-box\`。执行 `& "$env:ProgramFiles\sing-box\sing-box.exe" service install --config-url '你的配置地址'`。
 - **Android**：安装 SFA APK，在应用里导入配置，不用安装系统服务。
 
 **从旧服务迁移**：先核对新版二进制能运行，再用原服务管理器停用旧服务，避免两个服务抢 TUN 和端口。新版默认服务名为 `sing-box-managed`。在 macOS 上，普通用户可写的 Homebrew 前缀不能作为新系统服务的二进制、配置或数据路径；迁移时先把要保留的配置和状态放到管理员管理的目录，不要直接把 `-C` / `-D` 指回该前缀。

@@ -30,7 +30,7 @@ APK_BUILD_TOOLS_VERSION = "37.0.0"
 ANDROID_TRIPLES = {"arm64": "aarch64-linux-android", "amd64": "x86_64-linux-android"}
 TARGETS = (
     ("linux", "amd64", "v1"), ("linux", "amd64", "v4"), ("linux", "arm64", ""),
-    ("windows", "amd64", "v1"), ("windows", "arm64", ""),
+    ("windows", "amd64", "v1"),
     ("android", "arm64", ""), ("android", "amd64", ""), ("darwin", "arm64", ""),
 )
 
@@ -436,7 +436,7 @@ def main():
     parser.add_argument("--output-root", type=Path, default=Path.home() / ".cache/sing-box-cagedbird",
                         help="仓库外的产物根目录；按版本创建子目录（默认 ~/.cache/sing-box-cagedbird）")
     parser.epilog = (
-        "构建仅使用已提交的 HEAD，生成 8 个核心归档、SFA APK 和 libbox.aar；macOS arm64 不含 CGO 功能。\n"
+        "构建仅使用已提交的 HEAD，生成各平台核心归档、SFA APK 和 libbox.aar；macOS arm64 不含 CGO 功能。\n"
         f"构建：PATH 中的 Git、Go（{GO_ENV['GOTOOLCHAIN']}）、make、tar、file；"
         "JAVA_HOME（OpenJDK 17；也可用 PATH）。\n"
         "ANDROID_HOME（或 ANDROID_SDK_ROOT）指向已接受许可证的 Android SDK：\n"
