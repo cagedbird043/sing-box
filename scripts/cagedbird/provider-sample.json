@@ -1,0 +1,18 @@
+{
+  "log": { "disabled": true },
+  "providers": [
+    {
+      "type": "inline",
+      "tag": "sub",
+      "outbounds": [
+        { "type": "http", "tag": "local-http", "server": "127.0.0.1", "server_port": 8080 }
+      ],
+      "health_check": { "enabled": false }
+    }
+  ],
+  "outbounds": [
+    { "type": "selector", "tag": "select", "providers": ["sub"] },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": { "final": "select" }
+}

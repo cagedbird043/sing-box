@@ -1,0 +1,51 @@
+class SingBoxCagedbird < Formula
+  desc "Universal proxy platform with native Clash subscription support"
+  homepage "https://github.com/cagedbird043/sing-box"
+  version "@VERSION@"
+  license "GPL-3.0-or-later"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/cagedbird043/sing-box/releases/download/v@VERSION@/sing-box-cagedbird-darwin-arm64.tar.gz"
+      sha256 "@DARWIN_ARM64@"
+    end
+
+    on_intel do
+      odie "sing-box-cagedbird currently publishes macOS arm64 binaries only"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/cagedbird043/sing-box/releases/download/v@VERSION@/sing-box-cagedbird-linux-amd64.tar.gz"
+      sha256 "@LINUX_AMD64@"
+    end
+
+    on_arm do
+      url "https://github.com/cagedbird043/sing-box/releases/download/v@VERSION@/sing-box-cagedbird-linux-arm64.tar.gz"
+      sha256 "@LINUX_ARM64@"
+    end
+  end
+
+  conflicts_with "sing-box", because: "both install the sing-box binary"
+
+  def install
+    bin.install "sing-box"
+    prefix.install "BUILD-INFO.txt"
+    pkgshare.install "LICENSE"
+    generate_completions_from_executable(bin/"sing-box", "completion")
+  end
+
+  def caveats
+    <<~EOS
+      系统服务须从仅管理员可写的固定路径运行。若 Homebrew 目录可被普通用户写入，
+      请先把二进制部署到管理员管理的目录，再运行 service install。详见：
+        https://github.com/cagedbird043/sing-box/blob/cagedbird/alpha/FORK.md#系统服务
+    EOS
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/sing-box version")
+    assert_match "with_clash_api", shell_output("#{bin}/sing-box version")
+  end
+end
