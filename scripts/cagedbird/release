@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+import argparse
+import base64
+from concurrent.futures import ThreadPoolExecutor
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import zipfile
+
+REPO = "cagedbird043/sing-box"
+ALPHA = "refs/heads/cagedbird/alpha"
+TAP = "git@github.com:cagedbird043/homebrew-tap.git"
+ROOT = Path(__file__).resolve().parents[2]
+AUR = ROOT / ".agents/skills/cagedbird-release/scripts/update-aur.py"
+SAMPLE = Path(__file__).with_name("provider-sample.json")
+PREFIX = "sing-box-cagedbird"
+APP = f"{PREFIX}-android-apk"
+GO_ENV = {"GOTOOLCHAIN": "go1.26.6", "GOPROXY": os.environ.get("GOPROXY", "https://goproxy.cn,direct")}
+TARGETS = (
+    ("linux", "amd64", "v1"), ("linux", "amd64", "v4"), ("linux", "arm64", ""),
+    ("windows", "amd64", "v1"), ("windows", "arm64", ""),
+    ("android", "arm64", ""), ("android", "amd64", ""), ("darwin", "arm64", ""),
+)
+PROVIDER_PACKAGES = (
+    "./provider/...", "./adapter/...", "./protocol/group/...", "./daemon/...",
+    "./service/api", "./experimental/cachefile", "./option", "./schema", "./route",
+    "./common/interrupt",
+)
+
+def run(*args, cwd=ROOT, env=None, capture=False, **kwargs):
+    if capture:
+        kwargs.update(text=True, stdout=subprocess.PIPE)
+    result = subprocess.run(args, cwd=cwd, env=os.environ | env if env is not None else None,
+                            check=True, **kwargs)
+    return result.stdout.strip() if capture else None
+
+
+def git(*args, cwd=ROOT):
+    return run("git", *args, cwd=cwd, capture=True)
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def sha256(path):
+    with path.open("rb") as data:
+        return hashlib.file_digest(data, "sha256").hexdigest()
+
+
+def props(text):
+    return dict(line.split("=", 1) for line in text.splitlines()
+                if "=" in line and not line.lstrip().startswith("#"))
+
+
+def artifact(target):
+    system, arch, level = target
+    name = f"{PREFIX}-{system}-{arch}" + ("-v4" if level == "v4" else "")
+    return name, name + (".zip" if system == "windows" else ".tar.gz")
+
+
+def build_info(version, commit, **fields):
+    return "".join(f"{key}={value}\n" for key, value in
+                   dict(version=version, commit=commit, **fields).items())
+
+
+def ldflags(src, version=None):
+    shared = (src / "release/LDFLAGS").read_text().strip()
+    if version is None:
+        return shared
+    return f"-X github.com/sagernet/sing-box/constant.Version={version} {shared} -s -w -buildid="
+
+
+def tags(src):
+    return (src / "release/DEFAULT_BUILD_TAGS_OTHERS").read_text().strip()
+
+
+def check(src, scratch):
+    run("git", "diff", "--check", cwd=src)
+    go_test = ("go", "test", "-vet=off", "-ldflags", ldflags(src))
+    run(*go_test, *PROVIDER_PACKAGES, cwd=src, env=GO_ENV)
+    packages = run("go", "list", "./...", cwd=src, env=GO_ENV, capture=True).splitlines()
+    run(*go_test, *(p for p in packages if p != "github.com/sagernet/sing-box/common/netns"),
+        cwd=src, env=GO_ENV)
+    run("go", "run", "-ldflags", ldflags(src), "./cmd/sing-box", "check",
+        "-D", scratch, "-c", SAMPLE, cwd=src, env=GO_ENV)
+
+
+def build_binary(src, scratch, out, version, commit, target, android_tool):
+    system, arch, level = target
+    name, archive = artifact(target)
+    package = scratch / name
+    package.mkdir()
+    binary = package / ("sing-box.exe" if system == "windows" else "sing-box")
+    env = GO_ENV | {"GOOS": system, "GOARCH": arch, "GOAMD64": level,
+                    "CGO_ENABLED": "0", "GOFLAGS": "-p=4"}
+    command = ["go", "build", "-trimpath", "-o", binary, "-tags", tags(src),
+               "-ldflags", ldflags(src, version), "./cmd/sing-box"]
+    if system == "android":
+        triple = {"arm64": "aarch64-linux-android23", "amd64": "x86_64-linux-android23"}[arch]
+        cc = ndk() / "toolchains/llvm/prebuilt/linux-x86_64/bin" / (triple + "-clang")
+        env.update(CGO_ENABLED="1", CC=str(cc), CXX=str(cc) + "++", ANDROID_HOME=str(android_sdk()),
+                   ANDROID_NDK_HOME=str(ndk()))
+        command.insert(0, android_tool)
+    run(*command, cwd=src, env=env)
+    shutil.copyfile(src / "LICENSE", package / "LICENSE")
+    info = build_info(version, commit, target=f"{system}/{arch}", goamd64=level, tags=tags(src))
+    (package / "BUILD-INFO.txt").write_text(info)
+    if system == "windows":
+        with zipfile.ZipFile(out / archive, "w", zipfile.ZIP_DEFLATED) as dest:
+            for item in sorted(package.iterdir()):
+                dest.write(item, f"{name}/{item.name}")
+    else:
+        run("tar", "-czf", out / archive, name, cwd=scratch)
+    (out / f"{name}-BUILD-INFO.txt").write_text(info)
+
+
+def build_darwin(src, out, version, commit):
+    name, archive = artifact(("darwin", "arm64", ""))
+    info = build_info(version, commit, target="darwin/arm64", goamd64="", tags=tags(src))
+    build = shlex.join(["go", "build", "-trimpath", "-o", f"{name}/sing-box", "-tags",
+                        tags(src), "-ldflags", ldflags(src, version), "./cmd/sing-box"])
+    script = f'''set -eu
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' HUP INT TERM
+cd "$work"
+tar -xf -
+mkdir {name}
+export PATH="/opt/homebrew/bin:$PATH"
+export GOTOOLCHAIN={shlex.quote(GO_ENV['GOTOOLCHAIN'])} GOPROXY=https://proxy.golang.org,direct
+export GOOS=darwin GOARCH=arm64 CGO_ENABLED=1
+{build} >&2
+cp LICENSE {name}/
+printf %s {shlex.quote(info)} > {name}/BUILD-INFO.txt
+COPYFILE_DISABLE=1 tar -czf - {name}
+'''
+    with subprocess.Popen(["git", "archive", "--format=tar", commit], cwd=src,
+                          stdout=subprocess.PIPE) as source, (out / archive).open("wb") as dest:
+        try:
+            run("ssh", "-o", "BatchMode=yes", "mac", "sh -c " + shlex.quote(script),
+                stdin=source.stdout, stdout=dest)
+        finally:
+            source.stdout.close()
+        require(source.wait() == 0, "git archive 失败")
+    (out / f"{name}-BUILD-INFO.txt").write_text(info)
+
+
+def ndk():
+    return Path(os.environ.get("ANDROID_NDK_HOME", "/opt/android-ndk")).resolve()
+
+
+def android_sdk():
+    return Path(os.environ.get("ANDROID_HOME", "/opt/android-sdk")).resolve()
+
+
+def app_ndk():
+    path = android_sdk() / "ndk/28.0.13004108"
+    require((path / "source.properties").is_file(), f"缺少 Android 应用所需 NDK：{path}")
+    llvm = path / "toolchains/llvm/prebuilt/linux-x86_64/bin"
+    for triple in ("aarch64-linux-android24", "x86_64-linux-android24"):
+        compiler = llvm / f"{triple}-clang"
+        require(os.access(compiler, os.X_OK), f"Android 应用 NDK 编译器不可执行：{compiler}")
+    return path
+
+
+def java17():
+    java = Path(os.environ.get("JAVA_HOME", "/usr/lib/jvm/java-17-openjdk")).resolve()
+    require((java / "bin/javac").is_file() and "openjdk 17" in
+            run(java / "bin/java", "--version", capture=True), "请将 JAVA_HOME 指向 OpenJDK 17")
+    return java
+
+
+def signing_dir():
+    return Path.home() / ".config/sing-box/android-signing"
+
+
+def stable_certificate(java):
+    directory = signing_dir()
+    signing = props((directory / "local.properties").read_text())
+    cert = subprocess.check_output([
+        java / "bin/keytool", "-exportcert", "-keystore", directory / "sfa-cagedbird-release.keystore",
+        "-alias", signing["ALIAS_NAME"], "-storepass:env", "CAGEDBIRD_KEYSTORE_PASS",
+    ], env=os.environ | {"CAGEDBIRD_KEYSTORE_PASS": signing["KEYSTORE_PASS"]})
+    return hashlib.sha256(cert).hexdigest()
+
+
+def verify_apk(path, java, certificate):
+    apksigner = next((android_sdk() / "build-tools" / ver / "apksigner"
+                     for ver in ("37.0.0", "36.0.0")
+                     if (android_sdk() / "build-tools" / ver / "apksigner").is_file()), None)
+    require(apksigner is not None, "Android SDK 缺少 build-tools 37/36 的 apksigner")
+    output = run(apksigner, "verify", "--print-certs", path, capture=True,
+                 env={"JAVA_HOME": str(java), "PATH": f"{java / 'bin'}:{os.environ['PATH']}"})
+    signers = {digest.lower() for digest in re.findall(
+        r"^.* certificate SHA-256 digest: ([0-9a-fA-F]{64})[ \t]*$", output, re.M)}
+    require(signers == {certificate},
+            f"{path.name} 的签名不匹配稳定密钥：{', '.join(sorted(signers)) or '未识别证书摘要'}")
+    print(f"{path.name}: 签名证书 SHA-256 {certificate}（匹配）", flush=True)
+
+
+def build_apks(src, scratch, out, version, commit, java, certificate):
+    app = src / "clients/android"
+    revision = git("rev-parse", "HEAD:clients/android", cwd=src)
+    cached = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")) / "modules/clients/android"
+    local = cached.is_dir() and subprocess.run(
+        ["git", f"--git-dir={cached}", "cat-file", "-e", f"{revision}^{{commit}}"],
+        stderr=subprocess.DEVNULL).returncode == 0
+    options = ("-c", "protocol.file.allow=always", "-c", f"submodule.clients/android.url={cached}") if local else ()
+    run("git", *options, "submodule", "update", "--init", "--", "clients/android", cwd=src)
+    require(git("rev-parse", "HEAD", cwd=app) == revision, "Android gitlink 版本不匹配")
+    # The upstream Go helpers derive the version from git describe. The temporary
+    # tag stays in this clone, which has its own refs rather than shared worktree refs.
+    if git("tag", "--list", "v" + version, cwd=src):
+        require(git("rev-list", "-1", "v" + version, cwd=src) == commit, "构建标签指向其他提交")
+    else:
+        run("git", "tag", "v" + version, commit, cwd=src)
+    directory = signing_dir()
+    shutil.copyfile(directory / "sfa-cagedbird-release.keystore", app / "app/release.keystore")
+    (app / "app/release.keystore").chmod(0o600)
+    gopath = scratch / "mobile-go"
+    sdk = str(android_sdk())
+    env = GO_ENV | {"JAVA_HOME": str(java), "ANDROID_HOME": sdk, "ANDROID_SDK_ROOT": sdk,
+                    "ANDROID_NDK_HOME": str(app_ndk()), "GOPATH": str(gopath), "GOBIN": "",
+                    "GOMODCACHE": run("go", "env", "GOMODCACHE", env=GO_ENV, capture=True),
+                    "GOFLAGS": "-p=4"}
+    run("make", "lib_install", cwd=src, env=env)
+    env["PATH"] = f"{gopath / 'bin'}:{os.environ['PATH']}"
+    run("go", "run", "./cmd/internal/build_libbox", "-target", "android",
+        "-platform", "android/arm64,android/amd64", cwd=src, env=env)
+    libs = app / "app/libs"
+    libs.mkdir(exist_ok=True)
+    shutil.copyfile(src / "libbox.aar", libs / "libbox.aar")
+    run("go", "run", "./cmd/internal/update_android_version", "--ci", "--nightly", cwd=src, env=env)
+    env["LOCAL_PROPERTIES"] = base64.b64encode((directory / "local.properties").read_bytes()).decode("ascii")
+    run("./gradlew", ":app:assembleOtherRelease", "--configuration-cache", "--build-cache",
+        "--parallel", "--no-daemon", cwd=app, env=env)
+    apk_dir = app / "app/build/outputs/apk/other/release"
+    outputs = json.loads((apk_dir / "output-metadata.json").read_text())["elements"]
+    apks = sorted(entry["outputFile"] for entry in outputs)
+    require(len(apks) == len(set(apks)), "Gradle APK 文件名重复")
+    require(any(name.endswith("-arm64-v8a.apk") for name in apks) and
+            any(name.endswith("-universal.apk") for name in apks), "缺少 arm64-v8a 或 universal APK")
+    for name in apks:
+        require(re.fullmatch(r"SFA-[\w.+-]+\.apk", name), f"APK 文件名不符合发布格式：{name}")
+        verify_apk(apk_dir / name, java, certificate)
+        shutil.copyfile(apk_dir / name, out / name)
+    shutil.copyfile(src / "libbox.aar", out / "libbox.aar")
+    shutil.copyfile(app / "version.properties", out / "SFA-version.properties")
+    (out / f"{APP}-BUILD-INFO.txt").write_text(build_info(
+        version, commit, target="android/arm64,android/amd64", android_app_commit=revision,
+        signing="stable-key", signer_sha256=certificate, apks=",".join(apks)))
+
+
+def verify_assets(out, scratch, version, commit, src):
+    assets = []
+    binary = scratch / "inspect-binary"
+    for target in TARGETS:
+        system, arch, level = target
+        name, archive = artifact(target)
+        info = f"{name}-BUILD-INFO.txt"
+        expected = build_info(version, commit, target=f"{system}/{arch}", goamd64=level, tags=tags(src))
+        executable = f"{name}/sing-box" + (".exe" if system == "windows" else "")
+        require((out / info).read_text() == expected, f"{info} 构建信息不匹配")
+        with binary.open("wb") as dest:
+            if system == "windows":
+                with zipfile.ZipFile(out / archive) as payload:
+                    embedded = payload.read(f"{name}/BUILD-INFO.txt")
+                    payload.getinfo(f"{name}/LICENSE")
+                    with payload.open(executable) as source:
+                        shutil.copyfileobj(source, dest)
+            else:
+                with tarfile.open(out / archive) as payload:
+                    embedded = payload.extractfile(f"{name}/BUILD-INFO.txt").read()
+                    payload.getmember(f"{name}/LICENSE")
+                    with payload.extractfile(executable) as source:
+                        shutil.copyfileobj(source, dest)
+        require(embedded.decode() == expected, f"{archive} 内嵌构建信息不匹配")
+        actual = run("file", "-b", binary, capture=True)
+        kind = {"windows": "PE32+", "darwin": "Mach-O", "linux": "ELF 64-bit", "android": "ELF 64-bit"}[system]
+        cpu = r"x86[-_]64" if arch == "amd64" else r"(?:aarch64|arm64)"
+        require(kind in actual and re.search(cpu, actual, re.IGNORECASE),
+                f"{archive} 格式或架构不匹配：{actual}")
+        print(f"{archive}: {actual}", flush=True)
+        assets.extend((archive, info))
+    app_info = f"{APP}-BUILD-INFO.txt"
+    info = props((out / app_info).read_text())
+    apk_names = info["apks"].split(",")
+    require(info["version"] == version and info["commit"] == commit and
+            info["android_app_commit"] == git("rev-parse", f"{commit}:clients/android", cwd=src) and
+            info["signing"] == "stable-key" and re.fullmatch(r"[0-9a-f]{64}", info["signer_sha256"]) and
+            len(apk_names) == len(set(apk_names)) and
+            all(re.fullmatch(r"SFA-[\w.+-]+\.apk", name) for name in apk_names) and
+            any(name.endswith("-universal.apk") for name in apk_names) and
+            any(name.endswith("-arm64-v8a.apk") for name in apk_names),
+            f"{app_info} 构建信息不匹配")
+    properties = props((out / "SFA-version.properties").read_text())
+    require(properties["VERSION_NAME"] == version, "SFA VERSION_NAME 不匹配")
+    with zipfile.ZipFile(out / "libbox.aar") as aar:
+        require({"jni/arm64-v8a/libbox.so", "jni/x86_64/libbox.so", "classes.jar"}
+                .issubset(aar.namelist()), "AAR 缺少预期的库")
+    assets.extend((app_info, "libbox.aar", "SFA-version.properties", *apk_names))
+    return {name: sha256(out / name) for name in sorted(assets)}
+
+
+def build(src, scratch, out, version, commit):
+    require(not out.exists(), f"输出已存在：{out}；请移走后再构建")
+    app_ndk()
+    require(any(re.fullmatch(r"android-[0-9]+", platform.name)
+                and int(platform.name.removeprefix("android-")) >= 24
+                and (platform / "android.jar").is_file()
+                for platform in (android_sdk() / "platforms").iterdir()),
+            "gomobile 需要不带次版本号的 Android SDK 平台（例如 platforms;android-36）")
+    java = java17()
+    certificate = stable_certificate(java)
+    # Android version stamping, Go mobile outputs and submodule state must not
+    # affect VCS metadata in the desktop/core builds.
+    mobile_src = scratch / "android-source"
+    checkout(mobile_src, commit)
+    android_tool = scratch / "android-build"
+    run("go", "build", "-o", android_tool, "./cmd/internal/build", cwd=src, env=GO_ENV)
+    with tempfile.TemporaryDirectory(prefix=f".{version}-", dir=out.parent) as directory:
+        staging = Path(directory)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            jobs = [pool.submit(build_darwin, src, staging, version, commit),
+                    pool.submit(build_apks, mobile_src, scratch, staging, version, commit, java, certificate)]
+            jobs.extend(pool.submit(build_binary, src, scratch, staging, version, commit, target, android_tool)
+                        for target in TARGETS if target[0] != "darwin")
+            for job in jobs:
+                job.result()
+        assets = verify_assets(staging, scratch, version, commit, src)
+        (staging / ".assets.json").write_text(json.dumps(assets, indent=2) + "\n")
+        staging.rename(out)
+    print(f"产物：{out}", flush=True)
+
+
+def render_formula(out, version, assets):
+    template = Path(__file__).with_name("sing-box-cagedbird.rb.in").read_text()
+    substitutions = {"VERSION": version}
+    for suffix in ("darwin-arm64", "linux-amd64", "linux-arm64"):
+        name = f"{PREFIX}-{suffix}.tar.gz"
+        substitutions[suffix.upper().replace("-", "_")] = assets[name]
+    for key, value in substitutions.items():
+        template = template.replace(f"@{key}@", value)
+    formula = out / "sing-box-cagedbird.rb"
+    formula.write_text(template)
+    run("ruby", "-c", formula)
+    return formula
+
+
+def publish(src, scratch, out, version, commit, dry_run):
+    assets = verify_assets(out, scratch, version, commit, src)
+    require(assets == json.loads((out / ".assets.json").read_text()), "产物与完成构建时的摘要不匹配")
+    formula = render_formula(out, version, assets)
+    java = java17()
+    certificate = stable_certificate(java)
+    for name in assets:
+        if name.endswith(".apk"):
+            verify_apk(out / name, java, certificate)
+    tag = "v" + version
+    run(sys.executable, AUR, tag, "--build-dir", out, "--commit", commit, "--dry-run")
+    if dry_run:
+        print(f"已生成并验证发布文件：{out}（未联网）")
+        return
+    require(git("rev-parse", "HEAD") == commit and not git("status", "--porcelain"),
+            "发布要求干净且未变动的 HEAD")
+    urls = {f"git@github.com:{REPO}.git", f"https://github.com/{REPO}.git"}
+    require(git("remote", "get-url", "--all", "origin") in urls and
+            git("remote", "get-url", "--push", "--all", "origin") in urls,
+            f"origin 的 fetch/push 地址必须指向 {REPO}")
+    require(git("rev-parse", "refs/remotes/origin/cagedbird/alpha") == commit and
+            git("ls-remote", "--refs", "origin", ALPHA) == f"{commit}\t{ALPHA}",
+            "HEAD 与 origin/cagedbird/alpha 不一致")
+    ref = "refs/tags/" + tag
+    require(not git("tag", "--list", tag) and not git("ls-remote", "--refs", "origin", ref),
+            f"标签已存在：{tag}")
+    run("git", "tag", "-a", tag, commit, "-m", f"发布 {version}")
+    run("git", "push", "--no-follow-tags", f"--force-with-lease={ref}:", "origin", f"{ref}:{ref}")
+    notes = f"cagedbird 本机构建\n\n- 分支：cagedbird/alpha\n- 提交：{commit}\n- Android APK 使用稳定签名。"
+    run("gh", "release", "create", tag, *(out / name for name in assets), "-R", REPO,
+        "--verify-tag", "--prerelease", "--latest=false", "--title", version, "--notes", notes)
+    release = json.loads(run("gh", "api", f"repos/{REPO}/releases/tags/{tag}", capture=True))
+    remote_assets = {asset["name"]: asset["digest"] for asset in release["assets"]}
+    require(release["tag_name"] == tag and not release["draft"] and release["prerelease"] and
+            remote_assets == {name: f"sha256:{digest}" for name, digest in assets.items()},
+            "GitHub Release 资产摘要不匹配")
+    tap = scratch / "homebrew-tap"
+    run("git", "clone", TAP, tap)
+    filename = "Formula/sing-box-cagedbird.rb"
+    shutil.copyfile(formula, tap / filename)
+    run("git", "diff", "--check", cwd=tap)
+    run("git", "add", "--", filename, cwd=tap)
+    if git("diff", "--cached", "--name-only", cwd=tap):
+        run("git", "commit", "-m", f"更新 sing-box-cagedbird 至 {version}", "--", filename, cwd=tap)
+        branch = git("symbolic-ref", "HEAD", cwd=tap)
+        run("git", "push", "--no-follow-tags", "origin", f"HEAD:{branch}", cwd=tap)
+    run(sys.executable, AUR, tag, "--build-dir", out)
+
+
+def checkout(src, commit):
+    # Clone with independent refs so the temporary Android tag cannot escape.
+    run("git", "clone", "--quiet", "--shared", "--no-checkout", "--", ROOT, src)
+    run("git", "checkout", "--quiet", "--detach", commit, cwd=src)
+    # Relative gitlink URLs should resolve exactly as in the fork.
+    run("git", "remote", "set-url", "origin", git("remote", "get-url", "origin"), cwd=src)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="在工作站校验、构建、发布 cagedbird 当前提交。")
+    parser.add_argument("stage", nargs="?", choices=("check", "build", "publish"),
+                        help="check 检查；build 构建全部平台；publish 发布 GitHub → Homebrew → AUR；省略则检查并构建")
+    parser.add_argument("--dry-run", action="store_true", help="仅用于 publish；离线校验产物，生成 formula 和 PKGBUILD")
+    parser.add_argument("--output-root", type=Path, default=Path.home() / ".cache/sing-box-cagedbird",
+                        help="仓库外的产物根目录；按版本创建子目录（默认 ~/.cache/sing-box-cagedbird）")
+    parser.epilog = ("构建要求 ssh mac、OpenJDK 17（JAVA_HOME）、Android SDK（ANDROID_HOME，默认 /opt/android-sdk）、"
+                     "核心 NDK（ANDROID_NDK_HOME，默认 /opt/android-ndk）、Android 应用 NDK 28.0.13004108、"
+                     "一个不带次版本号的 gomobile SDK 平台（如 platforms;android-36）和 ~/.config/sing-box/android-signing 稳定签名。"
+                     "仅构建已提交的 HEAD；正式 publish 要求干净的 HEAD 与远端 alpha 一致。")
+    args = parser.parse_args()
+    if args.dry_run and args.stage != "publish":
+        parser.error("--dry-run 仅用于 publish")
+    commit = git("rev-parse", "HEAD")
+    base = git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "--exclude", "*cagedbird*", commit)
+    stamp = run("git", "log", "-1", "--date=format-local:%Y%m%d%H%M%S", "--format=%cd", commit,
+                env={"TZ": "UTC"}, capture=True)
+    version = f"{base[1:]}-cagedbird.{stamp}.{commit[:9]}"
+    require(re.fullmatch(r"[0-9][0-9A-Za-z.+-]*-cagedbird\.[0-9]{14}\.[0-9a-f]{9}", version),
+            f"非法发布版本：{version}")
+    output = args.output_root.expanduser().resolve()
+    require(not output.is_relative_to(ROOT), "产物目录必须位于仓库之外")
+    output.mkdir(parents=True, exist_ok=True)
+    out = output / version
+    print(f"提交 {commit}，版本 {version}", flush=True)
+    with (output / f".{version}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with tempfile.TemporaryDirectory(prefix="cagedbird-work-", dir=output) as directory:
+            scratch = Path(directory)
+            src = scratch / "source"
+            checkout(src, commit)
+            stages = (args.stage,) if args.stage else ("check", "build")
+            for stage in stages:
+                started = time.monotonic()
+                if stage == "check":
+                    check(src, scratch)
+                elif stage == "build":
+                    build(src, scratch, out, version, commit)
+                else:
+                    publish(src, scratch, out, version, commit, args.dry_run)
+                print(f"{stage}: {time.monotonic() - started:.1f}s", flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, KeyError, OSError, subprocess.CalledProcessError, tarfile.TarError, zipfile.BadZipFile) as error:
+        sys.exit(f"发布工具失败：{error}")
