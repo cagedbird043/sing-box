@@ -62,7 +62,9 @@ GOTOOLCHAIN=go1.26.6 go build -ldflags "$(cat release/LDFLAGS)" -tags "$(cat rel
 
 **从旧服务迁移**：先核对新版二进制能运行，再用原服务管理器停用旧服务，避免两个服务抢 TUN 和端口。新版默认服务名为 `sing-box-managed`。在 macOS 上，普通用户可写的 Homebrew 前缀不能作为新系统服务的二进制、配置或数据路径；迁移时先把要保留的配置和状态放到管理员管理的目录，不要直接把 `-C` / `-D` 指回该前缀。
 
-**平时怎么用**：`sing-box service status` 看状态；用管理员权限执行 `sing-box update` 立即拉取并刷新订阅，或执行 `sing-box service uninstall` 移除服务（保留配置和数据）。如果安装时用了二进制的完整路径，平时也用同一路径。服务会自动拉取配置；有效变更会重启子进程，连接可能短暂中断。
+**看服务状态**：Linux 用 `systemctl status sing-box-managed`。macOS 用 `launchctl print system/sing-box-managed`，看 `state` 和 `pid`。Windows 在 PowerShell 用 `sc.exe query sing-box-managed`。
+
+**更新配置**：用管理员权限执行 `sing-box update` 立即拉取并刷新订阅。要移除服务，执行 `sing-box service uninstall`，配置和数据会保留。如果安装时用了二进制的完整路径，这两个命令也用同一路径。服务会自动拉取配置；有效变更会重启子进程，连接可能短暂中断。
 
 ## Android 设备
 
